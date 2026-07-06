@@ -120,7 +120,7 @@ Preis: ${tariff.sale_price_eur} EUR
     try {
       const { data } = await supabase
         .from('knowledge_base')
-        .select('id, metadata')
+        .select('id, content, metadata')
         .eq('source_type', 'db_sync');
       existingKb = data || [];
     } catch (err) {
@@ -135,6 +135,14 @@ Preis: ${tariff.sale_price_eur} EUR
         })
         .filter(Boolean)
     );
+
+    // Trick: Falls veraltete Links mit Such-Query (?q=) im Wissens-Inhalt existieren,
+    // erzwingen wir einmalig eine Re-Synchronisation aller aktiven Tarife.
+    const hasOutdatedLinks = existingKb.some(row => row.content && row.content.includes('/tariffs?q='));
+    const forceFullSync = hasOutdatedLinks;
+    if (forceFullSync) {
+      logger.info('[Storefront Sync] Veraltete Produkt-Links (?q=) in Wissensdatenbank erkannt. Führe vollständige Re-Synchronisation aus, um sie durch direkte Links (/tariffs/[slug]) zu ersetzen.');
+    }
 
     progress(15, 'Lade Tarife aus der Storefront-Datenbank...');
     let tariffs = [];
@@ -167,8 +175,8 @@ Preis: ${tariff.sale_price_eur} EUR
       const isMissing = !existingProductIds.has(tariff.id);
       const hasFlag = !!tariff.ai_sync_flag;
 
-      // Überspringe, wenn bereits vorhanden und keine Änderung vorliegt (kein Flag)
-      if (!isMissing && !hasFlag) {
+      // Überspringe, wenn bereits vorhanden und keine Änderung/Erdopplung vorliegt (kein Flag und kein erzwungener Full Sync)
+      if (!isMissing && !hasFlag && !forceFullSync) {
         results.skipped++;
         continue;
       }

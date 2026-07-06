@@ -27,23 +27,37 @@ if (isStorefrontPostgres) {
 class StorefrontQueryBuilder {
   constructor(table) {
     this.table = table;
+    this.op = 'select'; // 'select' | 'update'
     this.selectFields = '*';
     this.countOption = null;
     this.isHead = false;
     this.conditions = [];
     this.orderFields = [];
     this.isMaybeSingle = false;
+    this.updateData = null;
   }
 
   select(fields = '*', options = {}) {
+    this.op = 'select';
     this.selectFields = fields || '*';
     this.countOption = options.count || null;
     this.isHead = options.head || false;
     return this;
   }
 
+  update(data) {
+    this.op = 'update';
+    this.updateData = data;
+    return this;
+  }
+
   eq(col, val) {
     this.conditions.push({ col, op: '=', val });
+    return this;
+  }
+
+  not(col, op, val) {
+    this.conditions.push({ col, op: 'NOT', subop: op, val });
     return this;
   }
 
@@ -72,10 +86,22 @@ class StorefrontQueryBuilder {
     const params = [];
     const placeholder = () => `$${params.length}`;
 
-    if (this.isHead) {
-      sql = `SELECT COUNT(*) AS __full_count FROM "${this.table}"`;
-    } else {
-      sql = `SELECT ${this.selectFields} FROM "${this.table}"`;
+    if (this.op === 'select') {
+      if (this.isHead) {
+        sql = `SELECT COUNT(*) AS __full_count FROM "${this.table}"`;
+      } else {
+        sql = `SELECT ${this.selectFields} FROM "${this.table}"`;
+      }
+    } else if (this.op === 'update') {
+      if (!this.updateData || Object.keys(this.updateData).length === 0) {
+        return { data: [], error: null, count: 0 };
+      }
+      const setClauses = [];
+      for (const [key, val] of Object.entries(this.updateData)) {
+        params.push(val);
+        setClauses.push(`"${key}" = ${placeholder()}`);
+      }
+      sql = `UPDATE "${this.table}" SET ${setClauses.join(', ')}`;
     }
 
     const compiledConds = [];
@@ -83,6 +109,13 @@ class StorefrontQueryBuilder {
       if (cond.op === '=') {
         params.push(cond.val);
         compiledConds.push(`"${cond.col}" = ${placeholder()}`);
+      } else if (cond.op === 'NOT') {
+        if (cond.subop === 'is' && cond.val === null) {
+          compiledConds.push(`"${cond.col}" IS NOT NULL`);
+        } else {
+          params.push(cond.val);
+          compiledConds.push(`NOT ("${cond.col}" ${cond.subop} ${placeholder()})`);
+        }
       } else if (cond.op === 'OR') {
         // e.g., 'iccid.eq.XXX,top_up_iccid.eq.XXX'
         const parts = cond.raw.split(',');
@@ -109,12 +142,15 @@ class StorefrontQueryBuilder {
       sql += ` WHERE ${compiledConds.join(' AND ')}`;
     }
 
-    if (this.orderFields.length > 0 && !this.isHead) {
-      sql += ` ORDER BY ${this.orderFields.join(', ')}`;
-    }
-
-    if (this.isMaybeSingle && !this.isHead) {
-      sql += ` LIMIT 1`;
+    if (this.op === 'select') {
+      if (this.orderFields.length > 0 && !this.isHead) {
+        sql += ` ORDER BY ${this.orderFields.join(', ')}`;
+      }
+      if (this.isMaybeSingle && !this.isHead) {
+        sql += ` LIMIT 1`;
+      }
+    } else if (this.op === 'update') {
+      sql += ` RETURNING *`;
     }
 
     try {

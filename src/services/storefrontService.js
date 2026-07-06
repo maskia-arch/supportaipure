@@ -70,7 +70,7 @@ const storefrontService = {
 
     const cleanShopUrl = (shopUrl || '').trim().replace(/\/$/, '');
     const productUrl = cleanShopUrl
-      ? `${cleanShopUrl}/tariffs?q=${encodeURIComponent(tariff.country_name || tariff.slug)}`
+      ? `${cleanShopUrl}/tariffs/${tariff.slug}`
       : '';
 
     let text = `Tarifname: ${tariff.name}
@@ -110,32 +110,52 @@ Preis: ${tariff.sale_price_eur} EUR
       logger.info(`[Storefront Sync] ${pct}% – ${step}`);
     };
 
-    const results = { saved: 0, skipped: 0, errors: 0 };
+    const results = { saved: 0, deleted: 0, skipped: 0, errors: 0 };
 
     progress(5, 'Kategorien vorbereiten...');
     await knowledgeEnricher.ensureEsimCategories();
 
-    progress(15, 'Lade Tarife aus der Datenbank...');
+    progress(10, 'Lade bestehende AI Wissensdatenbank...');
+    let existingKb = [];
+    try {
+      const { data } = await supabase
+        .from('knowledge_base')
+        .select('id, metadata')
+        .eq('source_type', 'db_sync');
+      existingKb = data || [];
+    } catch (err) {
+      logger.warn(`[Storefront Sync] Konnte bestehende Wissensdatenbank nicht laden: ${err.message}`);
+    }
+
+    const existingProductIds = new Set(
+      existingKb
+        .map(row => {
+          const meta = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
+          return meta?.product_id;
+        })
+        .filter(Boolean)
+    );
+
+    progress(15, 'Lade Tarife aus der Storefront-Datenbank...');
     let tariffs = [];
     try {
-      tariffs = await this.getAllTariffs();
+      // Lade aktive Tarife und alle Tarife mit gesetzter Flagge (auch inaktive/gelöschte)
+      const activeRes = await storefrontDb.from('tariffs').select('*').eq('is_active', true);
+      if (activeRes.error) throw activeRes.error;
+
+      const flaggedRes = await storefrontDb.from('tariffs').select('*').not('ai_sync_flag', 'is', null);
+      if (flaggedRes.error) throw flaggedRes.error;
+
+      const tariffMap = new Map();
+      (activeRes.data || []).forEach(t => tariffMap.set(t.id, t));
+      (flaggedRes.data || []).forEach(t => tariffMap.set(t.id, t));
+      tariffs = Array.from(tariffMap.values());
     } catch (err) {
       logger.error(`[Storefront Sync] Fehler beim Laden der Tarife: ${err.message}`);
       throw new Error(`Konnte Tarife nicht aus DB lesen: ${err.message}`);
     }
 
-    progress(25, `${tariffs.length} aktive Tarife geladen. Lösche alte Einträge...`);
-    try {
-      await supabase.from('knowledge_base').delete().eq('source_type', 'db_sync');
-    } catch (err) {
-      logger.warn(`[Storefront Sync] Fehler beim Bereinigen alter Einträge: ${err.message}`);
-    }
-
-    if (tariffs.length === 0) {
-      progress(100, 'Fertig: Keine Tarife zum Synchronisieren gefunden.');
-      return results;
-    }
-
+    progress(25, `${tariffs.length} Tarife geladen. Verarbeite Änderungen...`);
     const cats = await knowledgeEnricher._getCategories();
     let index = 0;
 
@@ -144,7 +164,45 @@ Preis: ${tariff.sale_price_eur} EUR
       const pct = Math.round(25 + ((index / tariffs.length) * 70));
       progress(pct, `Synchronisiere: ${tariff.name} (${tariff.country_name})`);
 
-      // Bestimme eSIM-Kategorie
+      const isMissing = !existingProductIds.has(tariff.id);
+      const hasFlag = !!tariff.ai_sync_flag;
+
+      // Überspringe, wenn bereits vorhanden und keine Änderung vorliegt (kein Flag)
+      if (!isMissing && !hasFlag) {
+        results.skipped++;
+        continue;
+      }
+
+      // 1. Lösche alten Wissenseintrag für dieses Produkt (falls vorhanden)
+      const toDeleteIds = [];
+      for (const entry of existingKb) {
+        const meta = typeof entry.metadata === 'string' ? JSON.parse(entry.metadata) : entry.metadata;
+        if (meta?.product_id === tariff.id) {
+          toDeleteIds.push(entry.id);
+        }
+      }
+      if (toDeleteIds.length > 0) {
+        try {
+          await supabase.from('knowledge_base').delete().in('id', toDeleteIds);
+          results.deleted += toDeleteIds.length;
+        } catch (err) {
+          logger.warn(`[Storefront Sync] Fehler beim Bereinigen von KB-Eintrag für ${tariff.name}: ${err.message}`);
+        }
+      }
+
+      // Falls Flagge "delete" ist oder das Produkt inaktiv ist, beenden wir nach dem Löschen
+      if (tariff.ai_sync_flag === 'delete' || !tariff.is_active) {
+        if (hasFlag) {
+          try {
+            await storefrontDb.from('tariffs').update({ ai_sync_flag: null }).eq('id', tariff.id);
+          } catch (err) {
+            logger.warn(`[Storefront Sync] Fehler beim Löschen des Flags für ${tariff.name}: ${err.message}`);
+          }
+        }
+        continue;
+      }
+
+      // 2. Bestimme eSIM-Kategorie und füge neu hinzu
       const tType = tariff.tariff_type || 'travel';
       let simplifiedType = 'travel';
       if (tType === 'unlimited_eco') simplifiedType = 'eco';
@@ -162,7 +220,15 @@ Preis: ${tariff.sale_price_eur} EUR
           price: tariff.sale_price_eur
         });
         results.saved += saved.length;
-        if (!saved.length) results.skipped++;
+
+        // Sync-Flagge in der Storefront DB nach erfolgreicher Übernahme löschen
+        if (hasFlag) {
+          try {
+            await storefrontDb.from('tariffs').update({ ai_sync_flag: null }).eq('id', tariff.id);
+          } catch (err) {
+            logger.warn(`[Storefront Sync] Fehler beim Löschen des Flags für ${tariff.name}: ${err.message}`);
+          }
+        }
       } catch (err) {
         results.errors++;
         logger.warn(`[Storefront Sync] Fehler bei ${tariff.name}: ${err.message}`);
@@ -172,7 +238,7 @@ Preis: ${tariff.sale_price_eur} EUR
       await new Promise(resolve => setTimeout(resolve, 150));
     }
 
-    progress(100, `Fertig: ${results.saved} Einträge gespeichert, ${results.errors} Fehler`);
+    progress(100, `Fertig: ${results.saved} gespeichert, ${results.deleted} gelöscht, ${results.skipped} übersprungen, ${results.errors} Fehler`);
     return results;
   },
 

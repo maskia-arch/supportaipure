@@ -1090,7 +1090,7 @@ const adminController = {
           price: t.sale_price_eur,
           currency: 'EUR',
           stock: -1,
-          url: shopUrl ? `${shopUrl.replace(/\/$/, '')}/tariffs?q=${encodeURIComponent(t.country_name || t.slug)}` : (t.country_name || t.slug || ''),
+          url: shopUrl ? `${shopUrl.replace(/\/$/, '')}/tariffs/${t.slug}` : (t.slug || ''),
           variants: 0,
           visibility: t.is_active ? 'visible' : 'hidden'
         })),

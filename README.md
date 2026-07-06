@@ -1,4 +1,4 @@
-# AI eSIM Berater (Standalone - VPS/Coolify)
+cd ..cd ..# AI eSIM Berater (Standalone - VPS/Coolify)
 
 Customer-Support-Bot mit Web-Widget und eigenem Admin-Dashboard, lauffähig auf dem eigenen VPS via Coolify.
 

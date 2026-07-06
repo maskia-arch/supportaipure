@@ -1,0 +1,16 @@
+node_modules
+npm-debug.log
+.env
+.git
+.gitignore
+.agents
+.gemini
+Dockerfile
+.dockerignore
+walkthrough.md
+task.md
+implementation_plan.md
+data
+data/
+*.db
+

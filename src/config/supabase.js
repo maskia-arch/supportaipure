@@ -382,40 +382,106 @@ async function initializeDatabase() {
       }
       logger.info(`[DB Setup] Postgres pgvector Support: ${hasPgVector ? 'JA' : 'NEIN'}`);
 
-      logger.info('[DB Init] Postgres: Führe Schema-Initialisierung aus...');
-      const schemaPath = path.join(__dirname, '../../supabase/schema_full_v2.sql');
-      if (fs.existsSync(schemaPath)) {
-        let sql = fs.readFileSync(schemaPath, 'utf8');
-        
-        // Wenn pgvector fehlt, passen wir das Schema für Vektoren an (speichern als Text)
-        if (!hasPgVector) {
-          logger.info('[DB Init] Postgres: Passe Schema für Betrieb OHNE pgvector an...');
-          sql = sql.replace(/embedding\s+vector\(\d+\)/gi, 'embedding TEXT');
-        }
+      // Prüfe, ob settings bereits existiert (um festzustellen, ob es eine Neuinstallation ist)
+      let isFreshInstall = false;
+      try {
+        const checkSettings = await pool.query("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'settings');");
+        isFreshInstall = !checkSettings.rows[0].exists;
+      } catch (e) {
+        isFreshInstall = true;
+      }
 
-        const statements = splitSqlStatements(sql);
-        for (const stmt of statements) {
-          // Überspringe Statements, die pgvector erfordern
+      if (isFreshInstall) {
+        logger.info('[DB Init] Postgres: Führe Erst-Schema-Initialisierung aus...');
+        const schemaPath = path.join(__dirname, '../../supabase/schema_full_v2.sql');
+        if (fs.existsSync(schemaPath)) {
+          let sql = fs.readFileSync(schemaPath, 'utf8');
+          
+          // Wenn pgvector fehlt, passen wir das Schema für Vektoren an (speichern als Text)
           if (!hasPgVector) {
-            if (stmt.toUpperCase().includes('USING IVFFLAT') || 
-                stmt.toUpperCase().includes('FUNCTION MATCH_KNOWLEDGE')) {
-              logger.info(`[DB Init] Postgres: Überspringe pgvector-abhängiges Statement: ${stmt.substring(0, 50)}...`);
-              continue;
-            }
+            logger.info('[DB Init] Postgres: Passe Schema für Betrieb OHNE pgvector an...');
+            sql = sql.replace(/embedding\s+vector\(\d+\)/gi, 'embedding TEXT');
           }
 
-          try {
-            await pool.query(stmt);
-          } catch (stmtErr) {
-            if (stmt.toUpperCase().includes('CREATE EXTENSION')) {
-              logger.warn(`[DB Init] Postgres: Extension-Erstellung ignoriert: ${stmtErr.message}`);
+          const statements = splitSqlStatements(sql);
+          for (const stmt of statements) {
+            // Überspringe Statements, die pgvector erfordern
+            if (!hasPgVector) {
+              if (stmt.toUpperCase().includes('USING IVFFLAT') || 
+                  stmt.toUpperCase().includes('FUNCTION MATCH_KNOWLEDGE')) {
+                logger.info(`[DB Init] Postgres: Überspringe pgvector-abhängiges Statement: ${stmt.substring(0, 50)}...`);
+                continue;
+              }
+            }
+
+            try {
+              await pool.query(stmt);
+            } catch (stmtErr) {
+              if (stmt.toUpperCase().includes('CREATE EXTENSION')) {
+                logger.warn(`[DB Init] Postgres: Extension-Erstellung ignoriert: ${stmtErr.message}`);
+              } else {
+                logger.error(`[DB Init] Postgres-Fehler bei SQL-Statement: ${stmt.substring(0, 150)}...`);
+                throw stmtErr;
+              }
+            }
+          }
+          logger.info('[DB Init] Postgres: Schema-Initialisierung erfolgreich abgeschlossen.');
+        }
+      } else {
+        logger.info('[DB Init] Postgres: Bereits initialisiert. Überspringe Erst-Schema.');
+      }
+
+      // Migrations-Runner
+      logger.info('[DB Init] Postgres: Überprüfe Datenbank-Migrationen...');
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          version VARCHAR(255) PRIMARY KEY,
+          executed_at TIMESTAMPTZ DEFAULT NOW()
+        );
+      `);
+
+      const supabaseDir = path.join(__dirname, '../../supabase');
+      if (fs.existsSync(supabaseDir)) {
+        const files = fs.readdirSync(supabaseDir);
+        const migrations = files
+          .filter(f => f.startsWith('MIGRATION_') && f.endsWith('.sql'))
+          .sort((a, b) => {
+            const numA = a.match(/\d+/g).map(Number);
+            const numB = b.match(/\d+/g).map(Number);
+            for (let i = 0; i < Math.max(numA.length, numB.length); i++) {
+              const valA = numA[i] || 0;
+              const valB = numB[i] || 0;
+              if (valA !== valB) return valA - valB;
+            }
+            return a.localeCompare(b);
+          });
+
+        for (const migrationFile of migrations) {
+          const check = await pool.query('SELECT 1 FROM schema_migrations WHERE version = $1', [migrationFile]);
+          if (check.rows.length === 0) {
+            if (isFreshInstall) {
+              // Bei einer Neuinstallation ist das Schema bereits auf dem neuesten Stand (2.0.23),
+              // wir markieren die Migration einfach als ausgeführt.
+              await pool.query('INSERT INTO schema_migrations (version) VALUES ($1)', [migrationFile]);
+              logger.info(`[DB Init] Postgres: Markiere Migration ${migrationFile} als ausgeführt (Neuinstallation).`);
             } else {
-              logger.error(`[DB Init] Postgres-Fehler bei SQL-Statement: ${stmt.substring(0, 150)}...`);
-              throw stmtErr;
+              logger.info(`[DB Init] Postgres: Führe Migration ${migrationFile} aus...`);
+              const migrationPath = path.join(supabaseDir, migrationFile);
+              let sql = fs.readFileSync(migrationPath, 'utf8');
+              const statements = splitSqlStatements(sql);
+              for (const stmt of statements) {
+                try {
+                  await pool.query(stmt);
+                } catch (stmtErr) {
+                  logger.error(`[DB Init] Postgres-Fehler bei Migration ${migrationFile} in Statement: ${stmt.substring(0, 100)}... | Msg: ${stmtErr.message}`);
+                  throw stmtErr;
+                }
+              }
+              await pool.query('INSERT INTO schema_migrations (version) VALUES ($1)', [migrationFile]);
+              logger.info(`[DB Init] Postgres: Migration ${migrationFile} erfolgreich abgeschlossen.`);
             }
           }
         }
-        logger.info('[DB Init] Postgres: Schema-Initialisierung erfolgreich abgeschlossen.');
       }
     } catch (err) {
       logger.error(`[DB Init] Postgres-Fehler: ${err.message}`);

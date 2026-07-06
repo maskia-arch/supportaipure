@@ -70,7 +70,7 @@ const storefrontService = {
 
     const cleanShopUrl = (shopUrl || '').trim().replace(/\/$/, '');
     const productUrl = cleanShopUrl
-      ? `${cleanShopUrl}/tariffs?q=${encodeURIComponent(tariff.slug)}`
+      ? `${cleanShopUrl}/tariffs?q=${encodeURIComponent(tariff.country_name || tariff.slug)}`
       : '';
 
     let text = `Tarifname: ${tariff.name}

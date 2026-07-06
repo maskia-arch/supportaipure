@@ -2,7 +2,6 @@ const express        = require('express');
 const router         = express.Router();
 const messageProcessor = require('../services/messageProcessor');
 const visitorService   = require('../services/visitorService');
-const sellauthService  = require('../services/sellauthService');
 const supabase         = require('../config/supabase');
 const logger           = require('../utils/logger');
 

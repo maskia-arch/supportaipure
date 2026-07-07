@@ -183,6 +183,12 @@ var CSS = [
 '#vs25-status-dot.manual{background:#f59e0b;animation:vspulse 2s ease infinite}',
 '#vs25-status-dot.offline{background:#ef4444;animation:none}',
 '@keyframes vspulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.7;transform:scale(1.1)}}',
+// ── FAB open/close icon swap ──────────────────────────────────────────────
+'#vs25-bbl.vs25-open{background:linear-gradient(135deg,#1e40af,#1e3a8a)}',
+'#vs25-bbl.vs25-open .vs25-bbl-chat{display:none}',
+'#vs25-bbl.vs25-open .vs25-bbl-close{display:flex}',
+'#vs25-bbl .vs25-bbl-chat{display:flex;align-items:center;justify-content:center}',
+'#vs25-bbl .vs25-bbl-close{display:none;align-items:center;justify-content:center;font-size:1.5rem;line-height:1;color:white;font-weight:300}',
 // ── Proactive invite bubble ───────────────────────────────────────────────
 '#vs25-inv{position:fixed;bottom:104px;right:24px;z-index:99997;background:white;color:#0f172a;border-radius:16px 16px 4px 16px;padding:12px 34px 12px 16px;max-width:220px;box-shadow:0 8px 32px rgba(37,99,235,.18),0 2px 8px rgba(0,0,0,.08);font-size:.875rem;line-height:1.5;font-weight:500;cursor:pointer;display:none;animation:vspop .35s cubic-bezier(.34,1.56,.64,1)}',
 '#vs25-inv.on{display:block}',
@@ -324,7 +330,8 @@ function build(){
   w.innerHTML=
     // ── Launch FAB
     '<button id="vs25-bbl" aria-label="Chat öffnen">'+
-      '<svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>'+
+      '<span class="vs25-bbl-chat"><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg></span>'+
+      '<span class="vs25-bbl-close">✕</span>'+
       '<span id="vs25-status-dot" class="online"></span>'+
     '</button>'+
     // ── Proactive invite
@@ -382,7 +389,7 @@ function build(){
 
   document.body.appendChild(w);
 
-  document.getElementById('vs25-bbl').onclick=openChat;
+  document.getElementById('vs25-bbl').onclick=toggleChat;
   document.getElementById('vs25-back').onclick=closeChat;
   document.getElementById('vs25-snd').onclick=sendMsg;
   document.getElementById('vs25-ki-toggle').onchange=toggleKI;
@@ -578,13 +585,21 @@ function startStatusPoll(){
   }, 15000);
 }
 
+function toggleChat(){if(isOpen) closeChat(); else openChat();}
 function openChat(){
   if(isOpen) return;isOpen=true;hideInv();_proDone=true;clearTimeout(_proTimer);
   document.getElementById('vs25-pnl').classList.add('on');
+  var bbl=document.getElementById('vs25-bbl');
+  if(bbl){bbl.classList.add('vs25-open');bbl.setAttribute('aria-label','Chat schließen');}
   setTimeout(function(){var i=document.getElementById('vs25-inp');if(i)i.focus();scrl();},80);
   trackPage();
 }
-function closeChat(){isOpen=false;document.getElementById('vs25-pnl').classList.remove('on');}
+function closeChat(){
+  isOpen=false;
+  document.getElementById('vs25-pnl').classList.remove('on');
+  var bbl=document.getElementById('vs25-bbl');
+  if(bbl){bbl.classList.remove('vs25-open');bbl.setAttribute('aria-label','Chat öffnen');}
+}
 function showInv(){if(_proDone||isOpen) return;document.getElementById('vs25-inv').classList.add('on');_proDone=true;}
 function hideInv(){document.getElementById('vs25-inv').classList.remove('on');}
 

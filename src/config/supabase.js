@@ -525,6 +525,9 @@ async function initializeDatabase() {
         `ALTER TABLE visitor_sessions ADD COLUMN last_page_url TEXT`,
         // v1.8: Seiten-URL in activities
         `ALTER TABLE visitor_activities ADD COLUMN page_url_full TEXT`,
+        // v1.8: Re-Branding: ValueShop25 → PureSim in settings
+        `UPDATE settings SET widget_powered_by = 'Powered by PureSim AI' WHERE widget_powered_by LIKE '%ValueShop%' OR widget_powered_by = 'Powered by PureSim AI'`,
+        `UPDATE settings SET system_prompt = REPLACE(system_prompt, 'ValueShop25', 'PureSim') WHERE system_prompt LIKE '%ValueShop25%'`,
       ];
 
       for (const sql of runtimeMigrations) {

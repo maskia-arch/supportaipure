@@ -34,3 +34,14 @@ ALTER TABLE visitor_sessions ADD COLUMN IF NOT EXISTS last_page_url TEXT;
 
 -- Vollstandige URL auch in visitor_activities fuer Klickpfad-Rekonstruktion
 ALTER TABLE visitor_activities ADD COLUMN IF NOT EXISTS page_url_full TEXT;
+
+-- v1.8: Re-Branding ValueShop25 -> PureSim in settings (Datenfixierung)
+UPDATE settings
+SET widget_powered_by = 'Powered by PureSim AI'
+WHERE widget_powered_by ILIKE '%valueshop%'
+   OR widget_powered_by IS NULL
+   OR widget_powered_by = '';
+
+UPDATE settings
+SET system_prompt = REPLACE(system_prompt, 'ValueShop25', 'PureSim')
+WHERE system_prompt ILIKE '%valueshop25%';

@@ -191,7 +191,7 @@ const notificationService = {
       ? `👋 ${vLabel} ist zurück`
       : `🔶 ${vLabel} — Neuer Besucher`;
     const body = pageTitle
-      ? `Schaut sich gerade „${String(pageTitle).substring(0, 55)}“ an`
+      ? `Befindet sich auf: ${String(pageTitle).substring(0, 55)}`
       : 'Ist gerade auf der Website';
 
     await this._push({
@@ -226,7 +226,7 @@ const notificationService = {
 
     const vLabel = _formatVisitor(visitorNumber);
     const body   = page
-      ? `Auf „${page.substring(0, 65)}“`
+      ? `Befindet sich auf: ${page.substring(0, 65)}`
       : 'Ist weiterhin auf der Website';
 
     await this._push({

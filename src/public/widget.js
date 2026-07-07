@@ -66,12 +66,54 @@ try {
 } catch(_) {}
 
 function smartTitle(){
-  var url=location.pathname;
-  var m=url.match(/\/product\/([^/?#]+)/);if(m)return m[1].replace(/-/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();});
-  var cm=url.match(/\/category\/([^/?#]+)/);if(cm)return 'Kategorie: '+cm[1].replace(/-/g,' ');
-  if(/\/checkout/i.test(url))return'Checkout';if(/\/cart|warenkorb/i.test(url))return'Warenkorb';
-  if(url==='/'||url==='')return'Startseite';
-  var t=(document.title||'').split(/\s[–|-]\s/)[0].trim();return t.length>50?t.substring(0,50)+'…':(t||'Seite');
+  var path=location.pathname;
+  var search=location.search;
+  // Startseite
+  if(path==='/'||path==='')return'Startseite';
+  // Warenkorb
+  if(/\/(cart|warenkorb)/i.test(path))return'Warenkorb';
+  // Checkout
+  if(/\/checkout/i.test(path)){
+    if(/order[-_]?received|thank/i.test(path))return'Bestellung abgeschlossen ✅';
+    return'Checkout';
+  }
+  // PureSim: Tarif-Detailseite /tariffs/slug
+  var td=path.match(/\/tariffs\/([^/?#]+)/i);
+  if(td)return'Tarif: '+td[1].replace(/-/g,' ');
+  // PureSim: Tarif-Suche /tariffs?q=Deutschland
+  if(/\/tariffs/i.test(path)){
+    var qp=new URLSearchParams(search).get('q')||new URLSearchParams(search).get('search')||'';
+    if(qp)return'Tarif-Suche: '+decodeURIComponent(qp).substring(0,40);
+    return'Tarifübersicht';
+  }
+  // Account
+  if(/\/account|\/my-account|\/mein-konto/i.test(path))return'Mein Konto';
+  // eSIM aktivieren
+  if(/\/activat|\/aktivier|\/install/i.test(path))return'eSIM aktivieren';
+  // Über uns / Kontakt / FAQ
+  if(/\/about|\/ueber-uns/i.test(path))return'Über uns';
+  if(/\/contact|\/kontakt/i.test(path))return'Kontakt';
+  if(/\/faq|\/hilfe|\/help/i.test(path))return'FAQ & Hilfe';
+  // Blog
+  var bp=path.match(/\/blog\/([^/?#]+)/i);
+  if(bp)return'Blog: '+bp[1].replace(/-/g,' ').substring(0,40);
+  if(/\/blog/i.test(path))return'Blog';
+  // Produkt (WooCommerce)
+  var pm=path.match(/\/product\/([^/?#]+)/i);
+  if(pm)return pm[1].replace(/-/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();});
+  // Kategorie
+  var cm=path.match(/\/categor[yi]\/([^/?#]+)/i);
+  if(cm)return'Kategorie: '+cm[1].replace(/-/g,' ');
+  // Rechtliches
+  if(/\/datenschutz|\/privacy/i.test(path))return'Datenschutz';
+  if(/\/impressum|\/imprint/i.test(path))return'Impressum';
+  if(/\/agb|\/terms/i.test(path))return'AGB';
+  // Fallback: Browser-Titel, Markenname abschneiden
+  var t=(document.title||'')
+    .split(/\s[–\-|]\s/)[0]
+    .replace(/\s*[\|–\-]\s*PureSim.*$/i,'')
+    .trim();
+  return t.length>60?t.substring(0,60)+'…':(t||'Seite');
 }
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
@@ -361,32 +403,58 @@ function build(){
   passiveTrack();startSession();loadFaq();
   _proTimer=setTimeout(showInv,28000);
 
-  // ─── Seitenwechsel-Tracking ───────────────────────────────────────────────
-  // sessionStorage NICHT bei Navigation löschen — der Besucher soll über
-  // alle Seiten hinweg als DERSELBE Besucher mit weiteren Seitenaufrufen
-  // erkannt werden. sessionStorage endet automatisch beim Schließen des Tabs.
-  // (Kein pagehide/beforeunload-Clear mehr.)
+  // ─── Seiten-Verlassen erkennen ────────────────────────────────────────────
+  // Wenn der User die Seite verlässt (Tab schließt, navigiert weg, App
+  // minimiert) → Session als inaktiv markieren.
+  function _sendLeave(){
+    var id=chatId||_ssGet(); if(!id) return;
+    // navigator.sendBeacon ist verlässlicher als fetch beim Schließen
+    var url=API+'/api/widget/leave';
+    var data=JSON.stringify({chatId:id});
+    try{
+      if(navigator.sendBeacon){
+        var blob=new Blob([data],{type:'application/json'});
+        navigator.sendBeacon(url,blob);
+      } else {
+        _postTrack('/api/widget/leave',{chatId:id},1);
+      }
+    }catch(_){}
+  }
+  // pagehide: zuverlässigster Event (mobile Safari, bfcache)
+  window.addEventListener('pagehide',_sendLeave);
+  // visibilitychange hidden: Tab-Wechsel, Minimieren
+  document.addEventListener('visibilitychange',function(){
+    if(document.visibilityState==='hidden') _sendLeave();
+  });
 }
 
 function passiveTrack(){
+  // Nur tracken wenn sich die URL geändert hat (verhindert doppeltes
+  // Inkrement beim Verweilen auf derselben Seite).
+  var currentUrl=location.href;
+  if(passiveTrack._lastSent===currentUrl) return;
+  passiveTrack._lastSent=currentUrl;
+
   var saved=_ssGet()||chatId;
-  _postTrack('/api/widget/beacon', {fingerprint:fp(),pageUrl:location.href,pageTitle:smartTitle(),chatId:saved})
+  _postTrack('/api/widget/beacon',{fingerprint:fp(),pageUrl:currentUrl,pageTitle:smartTitle(),chatId:saved})
   .then(function(d){
-    if(d && d.chatId && !_ssGet()) _ssSet(d.chatId);
+    if(d&&d.chatId&&!_ssGet()) _ssSet(d.chatId);
   });
 }
+passiveTrack._lastSent=null;
 
 function startSession(){
   _safeFetch(API+'/api/widget/config').then(function(r){return r.json();}).then(function(d){
     var ft=document.getElementById('vs25-ft-text');
     if(ft){
-      if(d.poweredBy===null||d.poweredBy===''){
+      if(d.poweredBy===null||d.poweredBy===''||d.poweredBy===false){
         ft.parentElement.style.display='none';
         var ir = document.querySelector('.vs25-ir');
         if(ir) ir.classList.add('vs25-is-last');
       }else if(d.poweredBy){
-        ft.textContent=d.poweredBy;
+        ft.textContent=d.poweredBy;  // Server-Wert gewinnt (z.B. "Powered by PureSim AI")
       }
+      // Falls poweredBy undefined/nicht im Response: Fallback bleibt "Powered by PureSim AI"
     }
     if(d.botName){
       var nameEl = document.querySelector('.vs25-hdr-name');
@@ -400,7 +468,7 @@ function startSession(){
     chatId=saved;
     loadHist();
     startStatusPoll();
-    passiveTrack();
+    // Kein zusätzlicher passiveTrack hier — wird bereits in build() aufgerufen
     return;
   }
 
@@ -409,6 +477,8 @@ function startSession(){
     if(!d || d.banned) return;
     if(!d.chatId) return;
     chatId=d.chatId; _ssSet(chatId);
+    // passiveTrack._lastSent synchronisieren damit /init + /beacon nicht doppeln
+    passiveTrack._lastSent=location.href;
     if(d.welcome) addMsg('b',d.welcome);
     loadHist(); startStatusPoll();
   });

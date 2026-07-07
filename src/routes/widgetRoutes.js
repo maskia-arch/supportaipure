@@ -246,16 +246,44 @@ router.get('/faq', async (req, res) => {
   res.json({ faqs });
 });
 
+// ── Besucher hat die Seite verlassen ──────────────────────────────────────────
+// Wird via navigator.sendBeacon ausgelöst wenn Tab geschlossen / Seite verlassen.
+// Markiert die aktive Session als inaktiv damit Live-Dashboard korrekt ist.
+router.post('/leave', async (req, res) => {
+  res.sendStatus(200);
+  setImmediate(async () => {
+    try {
+      const chatId = req.headers['x-chat-id'] || req.body?.chatId;
+      if (!chatId) return;
+
+      // Aktive Sessions für diesen Visitor als inaktiv markieren
+      await supabase
+        .from('visitor_sessions')
+        .update({ is_active: false })
+        .eq('chat_id', chatId)
+        .eq('is_active', true);
+
+      // widget_visitors last_seen aktuell halten
+      await supabase
+        .from('widget_visitors')
+        .update({ last_seen: new Date() })
+        .eq('chat_id', chatId);
+
+      logger.debug(`[Leave] Session inaktiv gesetzt: ${chatId}`);
+    } catch (_) {}
+  });
+});
+
 router.get('/config', async (req, res) => {
   try {
     const { data: s } = await supabase.from('settings').select('welcome_message, widget_powered_by').single();
     res.json({
-      enabled: true,
-      botName: 'PureSim Support',
+      enabled:        true,
+      botName:        'PureSim Support',
       welcomeMessage: s?.welcome_message || 'Hallo!',
-      poweredBy: s?.widget_powered_by || 'PureSim AI'
+      poweredBy:      s?.widget_powered_by || 'Powered by PureSim AI'
     });
-  } catch { res.json({ enabled: true }); }
+  } catch { res.json({ enabled: true, botName: 'PureSim Support', poweredBy: 'Powered by PureSim AI' }); }
 });
 
 // ── Chat-Record sicherstellen ────────────────────────────────────────────────

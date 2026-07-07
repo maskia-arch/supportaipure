@@ -1,7 +1,7 @@
 /**
  * knowledgeEnricher.js v2.1.0
  *
- * AI-Vorarbeiter für die eSIM-Wissensdatenbank (ValueShop25.com).
+ * AI-Vorarbeiter für die eSIM-Wissensdatenbank (puresim.net).
  * GPT-4o-mini kategorisiert und strukturiert jeden Eintrag
  * bevor er als Embedding in die KB gespeichert wird.
  */
@@ -163,7 +163,7 @@ const knowledgeEnricher = {
       ? `Die Kategorie ist bereits festgelegt (ID ${catId}) — gib diese ID unverändert zurück.`
       : `"category_id": <ID aus der Liste oben — passend zum Tariftyp>`;
 
-    const prompt = `Du bist ein Wissensbank-Assistent für den eSIM-Shop ValueShop25.com.
+    const prompt = `Du bist ein Wissensbank-Assistent für den eSIM-Shop puresim.net.
 
 TARIFTYP-KONTEXT:
 ${tariffDesc}

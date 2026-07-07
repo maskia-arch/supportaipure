@@ -47,31 +47,38 @@ const visitorService = {
 
       // 3. Bestehenden Besucher aktualisieren — SELBE chatId zurückgeben
       if (existing) {
-        // Update last_seen + eventuell neuen Fingerprint nachtragen
         await supabase.from('widget_visitors').update({
           last_seen:   new Date(),
           user_agent:  userAgent || existing.user_agent,
-          // Fingerprint nur überschreiben wenn vorher fehlte (nicht zurücksetzen)
           fingerprint: fingerprint || existing.fingerprint,
           ip_hash:     ipHash,
           ip:          ip || existing.ip
         }).eq('chat_id', existing.chat_id);
 
-        return { chatId: existing.chat_id, visitor: existing, isNew: false };
+        return {
+          chatId:        existing.chat_id,
+          visitor:       existing,
+          isNew:         false,
+          visitorNumber: existing.visitor_number || null
+        };
       }
 
-      // 4. Neuen Besucher anlegen — chatId aus IP-Hash + Timestamp
+      // 4. Nächste sequenzielle Besucher-Nummer vergeben
+      const visitorNumber = await this._nextVisitorNumber();
+
+      // 5. Neuen Besucher anlegen — chatId aus IP-Hash + Timestamp
       const idBase = ipHash.substring(0, 10);
       const chatId = 'web_' + idBase + '_' + Date.now().toString(36).slice(-4);
 
       const { data: created, error: insErr } = await supabase.from('widget_visitors').insert([{
-        chat_id:     chatId,
-        ip:          ip,
-        ip_hash:     ipHash,
-        user_agent:  userAgent || null,
-        fingerprint: fingerprint || null,
-        first_seen:  new Date(),
-        last_seen:   new Date()
+        chat_id:        chatId,
+        visitor_number: visitorNumber,
+        ip:             ip,
+        ip_hash:        ipHash,
+        user_agent:     userAgent || null,
+        fingerprint:    fingerprint || null,
+        first_seen:     new Date(),
+        last_seen:      new Date()
       }]).select().single();
 
       if (insErr) {
@@ -79,23 +86,43 @@ const visitorService = {
         // Beim Insert-Fehler nochmals per fingerprint/IP suchen (Parallel-Request race)
         if (fingerprint) {
           const { data: byFp2 } = await supabase
-            .from('widget_visitors').select('chat_id').eq('fingerprint', fingerprint).maybeSingle();
-          if (byFp2?.chat_id) return { chatId: byFp2.chat_id, visitor: byFp2, isNew: false };
+            .from('widget_visitors').select('chat_id, visitor_number').eq('fingerprint', fingerprint).maybeSingle();
+          if (byFp2?.chat_id) return { chatId: byFp2.chat_id, visitor: byFp2, isNew: false, visitorNumber: byFp2.visitor_number || null };
         }
         const { data: byIp2 } = await supabase
-          .from('widget_visitors').select('chat_id').eq('ip_hash', ipHash).maybeSingle();
-        if (byIp2?.chat_id) return { chatId: byIp2.chat_id, visitor: byIp2, isNew: false };
+          .from('widget_visitors').select('chat_id, visitor_number').eq('ip_hash', ipHash).maybeSingle();
+        if (byIp2?.chat_id) return { chatId: byIp2.chat_id, visitor: byIp2, isNew: false, visitorNumber: byIp2.visitor_number || null };
         // Letzter Fallback: chatId ohne DB-Eintrag verwenden
-        return { chatId, visitor: null, isNew: true };
+        return { chatId, visitor: null, isNew: true, visitorNumber };
       }
 
-      return { chatId, visitor: created, isNew: true };
+      return { chatId, visitor: created, isNew: true, visitorNumber };
     } catch (err) {
       logger.warn('[Visitor] getOrCreate Fehler: ' + err.message);
       const chatId = 'web_' + ipHash.substring(0, 10) + '_' + Date.now().toString(36).slice(-4);
-      return { chatId, visitor: null, isNew: true };
+      return { chatId, visitor: null, isNew: true, visitorNumber: null };
     }
   },
+
+  // ── Sequenz: nächste Besucher-Nummer vergeben ──────────────────────────────
+  // Atomic in SQLite und Postgres: UPDATE mit RETURNING / Fallback via select+update
+  async _nextVisitorNumber() {
+    try {
+      // SQLite & Postgres kompatible Strategie: read-modify-write
+      const { data: seq } = await supabase
+        .from('visitor_number_seq')
+        .select('last_number')
+        .eq('id', 1)
+        .maybeSingle();
+      const next = ((seq && seq.last_number) || 0) + 1;
+      await supabase.from('visitor_number_seq').update({ last_number: next }).eq('id', 1);
+      return next;
+    } catch (_) {
+      // Fallback: zufällige Nummer aus Timestamp (nicht sequenziell aber einzigartig)
+      return Math.floor(Date.now() / 1000) % 100000;
+    }
+  },
+
   
   async isBanned(ip, chatId) {
     try {

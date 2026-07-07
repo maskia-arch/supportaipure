@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS settings (
   webhook_url TEXT DEFAULT '',
 
   -- Widget
-  widget_powered_by TEXT DEFAULT 'Powered by ValueShop25 AI',
+  widget_powered_by TEXT DEFAULT 'Powered by PureSim AI',
 
   -- Abuse Detection
   abuse_max_msgs_per_hour INTEGER DEFAULT 30,

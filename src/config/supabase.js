@@ -69,7 +69,7 @@ const SQLITE_SCHEMA = `
     notify_new_chat INTEGER DEFAULT 1,
     notify_every_msg INTEGER DEFAULT 0,
     webhook_url TEXT DEFAULT '',
-    widget_powered_by TEXT DEFAULT 'Powered by ValueShop25 AI',
+    widget_powered_by TEXT DEFAULT 'Powered by PureSim AI',
     abuse_max_msgs_per_hour INTEGER DEFAULT 30,
     abuse_auto_ban_flags INTEGER DEFAULT 3,
     abuse_min_msg_length INTEGER DEFAULT 1,
@@ -196,6 +196,7 @@ const SQLITE_SCHEMA = `
 
   CREATE TABLE IF NOT EXISTS widget_visitors (
     chat_id TEXT PRIMARY KEY,
+    visitor_number INTEGER,
     ip TEXT,
     fingerprint TEXT,
     user_agent TEXT,
@@ -205,6 +206,13 @@ const SQLITE_SCHEMA = `
     ip_hash TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS visitor_number_seq (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_number INTEGER DEFAULT 0
+  );
+
+  INSERT OR IGNORE INTO visitor_number_seq (id, last_number) VALUES (1, 0);
+
   CREATE TABLE IF NOT EXISTS visitor_sessions (
     id TEXT PRIMARY KEY,
     chat_id TEXT,
@@ -212,7 +220,9 @@ const SQLITE_SCHEMA = `
     last_seen TEXT DEFAULT CURRENT_TIMESTAMP,
     is_active INTEGER DEFAULT 1,
     entry_page TEXT,
+    entry_page_url TEXT,
     last_page TEXT,
+    last_page_url TEXT,
     page_count INTEGER DEFAULT 1
   );
 
@@ -501,6 +511,34 @@ async function initializeDatabase() {
         });
       }
       logger.info('[DB Init] SQLite: Schema-Initialisierung abgeschlossen.');
+
+      // ── Runtime-Migrationen für bestehende Installs ─────────────────────────
+      // Sicher: jede ALTER TABLE wird ignoriert wenn die Spalte schon existiert.
+      const runtimeMigrations = [
+        // v1.8: Sequentielle Besucher-Nummern
+        `ALTER TABLE widget_visitors ADD COLUMN visitor_number INTEGER`,
+        // v1.8: visitor_number Sequenz-Tabelle (bereits im SQLITE_SCHEMA, Fallback)
+        `CREATE TABLE IF NOT EXISTS visitor_number_seq (id INTEGER PRIMARY KEY CHECK (id = 1), last_number INTEGER DEFAULT 0)`,
+        `INSERT OR IGNORE INTO visitor_number_seq (id, last_number) VALUES (1, 0)`,
+        // v1.8: Vollständige Seiten-URLs in Sessions
+        `ALTER TABLE visitor_sessions ADD COLUMN entry_page_url TEXT`,
+        `ALTER TABLE visitor_sessions ADD COLUMN last_page_url TEXT`,
+        // v1.8: Seiten-URL in activities
+        `ALTER TABLE visitor_activities ADD COLUMN page_url_full TEXT`,
+      ];
+
+      for (const sql of runtimeMigrations) {
+        await new Promise((res) => {
+          db.run(sql, (err) => {
+            // "duplicate column" ist erwarteter Fehler bei wiederholten Starts → ignorieren
+            if (err && !err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+              logger.warn(`[DB Migrate] SQLite Migration übersprungen: ${err.message}`);
+            }
+            res();
+          });
+        });
+      }
+      logger.info('[DB Init] SQLite: Runtime-Migrationen abgeschlossen.');
       resolve();
     });
   }

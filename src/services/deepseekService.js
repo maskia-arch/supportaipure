@@ -48,7 +48,7 @@ BESTELLSTATUS: Wenn Kunde nach Bestellung fragt →
 
 TAGES-COUPON: Wenn Kunde nach Rabatt, Coupon, Angebot oder Aktion fragt →
 Der aktuelle Coupon-Code wird dir als Teil des Kontexts mitgeteilt (AKTUELLER COUPON).
-Wenn ein Coupon aktiv ist: Nenne den Code und die Beschreibung. Weise auf ValueShop25.com hin.
+Wenn ein Coupon aktiv ist: Nenne den Code und die Beschreibung. Weise auf puresim.net hin.
 Wenn kein Coupon-Kontext vorhanden: "Gerade haben wir keinen aktiven Code. Schau morgen wieder vorbei!"`
 
 // PRODUKT-REGELN — werden bei JEDER Antwort angewendet, mit oder ohne Kontext
@@ -208,7 +208,7 @@ const deepseekService = {
 
   // Cache-Strategie: statisch → semi-statisch → dynamisch
   _buildSystemPrompt(settings, contextDocs, chatSummary) {
-    const base = settings.system_prompt  || `Du bist ein freundlicher eSIM-Berater für ValueShop25.com.
+    const base = settings.system_prompt  || `Du bist ein freundlicher eSIM-Berater für puresim.net.
 
 DEINE HAUPTAUFGABE: Ermittle den Bedarf des Kunden und empfehle die passende eSIM.
 

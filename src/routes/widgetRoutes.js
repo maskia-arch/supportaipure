@@ -32,26 +32,31 @@ router.post('/beacon', async (req, res) => {
   setImmediate(async () => {
     try {
       const ip = visitorService._getClientIp(req);
-      const { chatId, isNew } = await visitorService.getOrCreateVisitor(
+      const { chatId, isNew, visitorNumber } = await visitorService.getOrCreateVisitor(
         ip, req.headers['user-agent'], req.body.fingerprint
       );
       const banCheck = await visitorService.isBanned(ip, chatId);
       if (banCheck.banned) return;
 
-      const pageTitle = req.body.pageTitle || getSmartTitle(req.body.pageUrl, req.body.pageTitle);
+      const pageUrl   = req.body.pageUrl || '';
+      const pageTitle = req.body.pageTitle || getSmartTitle(pageUrl, req.body.pageTitle);
+
+      // Sicherstellen dass ein chats-Eintrag existiert (auch ohne Chat-Öffnung)
+      await _ensureChatRecord(chatId, ip, isNew);
 
       // Visitor-Session aktualisieren (damit Live-Dashboard aktuell bleibt)
-      await _upsertSession(chatId, pageTitle, supabase, isNew);
+      await _upsertSession(chatId, pageTitle, pageUrl, supabase, isNew);
 
-      // Activity-Log
-      await visitorService.logActivity(chatId, `Besucht: ${pageTitle}`, req.body.pageUrl, pageTitle).catch(() => {});
+      // Activity-Log (mit voller URL)
+      await visitorService.logActivity(chatId, `Besucht: ${pageTitle}`, pageUrl, pageTitle).catch(() => {});
 
       // Push-Notification (throttled, nur wenn VAPID konfiguriert)
       const notifService = require('../services/notificationService');
       await notifService.notifyVisitorActivity({
         chatId,
+        visitorNumber,
         pageTitle,
-        pageUrl: req.body.pageUrl
+        pageUrl
       }).catch(() => {});
 
     } catch (_) {}
@@ -59,37 +64,95 @@ router.post('/beacon', async (req, res) => {
 });
 
 function getSmartTitle(url, titleFromBrowser) {
-  if (titleFromBrowser) return titleFromBrowser.split(/\s[–|-]\s/)[0].trim().substring(0, 50);
+  // Browser liefert den echten Seiten-Titel → Markenname abschneiden
+  if (titleFromBrowser) {
+    return titleFromBrowser
+      .split(/\s[–\-|]\s/)[0]   // "Startseite – PureSim" → "Startseite"
+      .replace(/\s*[\|–\-]\s*PureSim.*$/i, '')
+      .trim()
+      .substring(0, 60) || 'Seite';
+  }
   if (!url) return 'Seite';
   try {
-    const path = new URL(url).pathname;
-    // Warenkorb / Cart
+    const u    = new URL(url);
+    const path = u.pathname;
+    const q    = u.searchParams;
+
+    // ── Startseite ────────────────────────────────────────────────────────────
+    if (path === '/' || path === '') return 'Startseite';
+
+    // ── Warenkorb / Cart ──────────────────────────────────────────────────────
     if (/\/(cart|warenkorb)/i.test(path)) return 'Warenkorb';
-    // Checkout (incl. /checkout/order-received etc.)
+
+    // ── Checkout ──────────────────────────────────────────────────────────────
     if (/\/checkout/i.test(path)) {
-      if (/order[-_]?received|thank/i.test(path)) return 'Bestellung abgeschlossen';
+      if (/order[-_]?received|thank/i.test(path)) return 'Bestellung abgeschlossen ✅';
       return 'Checkout';
     }
-    // Produktseite
-    const m = path.match(/\/product\/([^/?#]+)/);
-    if (m) return m[1].replace(/-/g,' ').replace(/\b\w/g, c => c.toUpperCase());
-    // Startseite
-    if (path === '/' || path === '') return 'Startseite';
-    // Alles andere: Pfad leserlich machen
-    return path.replace(/^\//, '').replace(/[-\/]/g, ' ').replace(/\s+/g,' ').trim().substring(0,50) || 'Seite';
+
+    // ── PureSim: Tarif-Detailseite  /tariffs/ckh993 ───────────────────────────
+    const tariffDetail = path.match(/\/tariffs\/([^/?#]+)/i);
+    if (tariffDetail) {
+      const slug = tariffDetail[1].replace(/-/g, ' ');
+      return `Tarif: ${slug}`;
+    }
+
+    // ── PureSim: Tarif-Suche  /tariffs?q=Deutschland ─────────────────────────
+    if (/\/tariffs/i.test(path)) {
+      const qParam = q.get('q') || q.get('search') || q.get('query');
+      if (qParam) return `Tarif-Suche: ${decodeURIComponent(qParam).substring(0, 40)}`;
+      return 'Tarifübersicht';
+    }
+
+    // ── PureSim: Account / Meine Bestellungen ────────────────────────────────
+    if (/\/account|\/my-account|\/mein-konto/i.test(path)) return 'Mein Konto';
+
+    // ── PureSim: eSIM aktivieren / Installation ───────────────────────────────
+    if (/\/activat|\/aktivier|\/install/i.test(path)) return 'eSIM aktivieren';
+
+    // ── PureSim: Über uns / Kontakt / FAQ ────────────────────────────────────
+    if (/\/about|\/ueber-uns/i.test(path)) return 'Über uns';
+    if (/\/contact|\/kontakt/i.test(path)) return 'Kontakt';
+    if (/\/faq|\/hilfe|\/help/i.test(path)) return 'FAQ & Hilfe';
+
+    // ── PureSim: Blog ────────────────────────────────────────────────────────
+    const blogPost = path.match(/\/blog\/([^/?#]+)/i);
+    if (blogPost) return `Blog: ${blogPost[1].replace(/-/g, ' ').substring(0, 40)}`;
+    if (/\/blog/i.test(path)) return 'Blog';
+
+    // ── Generisches Produkt (WooCommerce o.ä.) ────────────────────────────────
+    const prod = path.match(/\/product\/([^/?#]+)/i);
+    if (prod) return prod[1].replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).substring(0, 50);
+
+    // ── Kategorie ─────────────────────────────────────────────────────────────
+    const cat = path.match(/\/categor[yi]\/([^/?#]+)/i);
+    if (cat) return `Kategorie: ${cat[1].replace(/-/g, ' ')}`;
+
+    // ── Datenschutz / Impressum ───────────────────────────────────────────────
+    if (/\/datenschutz|\/privacy/i.test(path)) return 'Datenschutz';
+    if (/\/impressum|\/imprint/i.test(path)) return 'Impressum';
+    if (/\/agb|\/terms/i.test(path)) return 'AGB';
+
+    // ── Alles andere: leserlicher Pfad ───────────────────────────────────────
+    return path.replace(/^\//, '').replace(/[-\/]/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 50) || 'Seite';
   } catch { return 'Seite'; }
 }
 
 router.post('/init', async (req, res) => {
   try {
     const ip = visitorService._getClientIp(req);
-    const { chatId, isNew } = await visitorService.getOrCreateVisitor(ip, req.headers['user-agent'], req.body.fingerprint);
+    const { chatId, isNew, visitorNumber } = await visitorService.getOrCreateVisitor(ip, req.headers['user-agent'], req.body.fingerprint);
     const banCheck = await visitorService.isBanned(ip, chatId);
     if (banCheck.banned) return res.json({ banned: true, message: 'Zugang gesperrt.' });
 
+    const pageUrl    = req.body.pageUrl || '';
     const smartTitle = req.body.pageTitle || 'Website';
-    await visitorService.logActivity(chatId, `Besucht: ${smartTitle}`, req.body.pageUrl, smartTitle);
-    await _upsertSession(chatId, smartTitle, supabase, isNew);
+
+    // Sicherstellen dass ein chats-Eintrag existiert (auch ohne Chat-Öffnung)
+    await _ensureChatRecord(chatId, ip, isNew);
+
+    await visitorService.logActivity(chatId, `Besucht: ${smartTitle}`, pageUrl, smartTitle);
+    await _upsertSession(chatId, smartTitle, pageUrl, supabase, isNew);
 
     let welcome = 'Hallo! 👋 Wie kann ich dir helfen?';
     const { data: s } = await supabase.from('settings').select('welcome_message').single();
@@ -97,14 +160,15 @@ router.post('/init', async (req, res) => {
 
     res.json({ chatId, isNew, welcome, banned: false });
 
-    // (1.6.76-2) Push-Notification fuer JEDEN /init - throttled in notificationService
+    // Push-Notification fuer JEDEN /init - throttled in notificationService
     setImmediate(() => {
       try {
         const notifService = require('../services/notificationService');
         notifService.notifyNewVisitor({
           chatId,
+          visitorNumber,
           pageTitle: smartTitle,
-          pageUrl:   req.body.pageUrl,
+          pageUrl,
           isNew
         }).catch(() => {});
       } catch (_) {}
@@ -153,16 +217,26 @@ router.post('/activity', async (req, res) => {
       const pageTitle = rawTitle || getSmartTitle(req.body.pageUrl, rawTitle);
       const pageUrl   = req.body.pageUrl || '';
 
-      // Log the activity
+      // Log the activity (inkl. voller URL)
       await visitorService.logActivity(chatId, `Besucht: ${pageTitle}`, pageUrl, pageTitle);
 
-      // CRITICAL: also update the visitor session so cart/checkout pages appear
-      // in last_page and page_count (live dashboard visibility)
-      await _upsertSession(chatId, pageTitle, supabase, false);
+      // Session-Update mit voller URL
+      await _upsertSession(chatId, pageTitle, pageUrl, supabase, false);
 
-      // Activity push (throttled)
+      // Activity push (throttled) — visitorNumber aus DB laden
+      const { data: vData } = await supabase
+        .from('widget_visitors')
+        .select('visitor_number')
+        .eq('chat_id', chatId)
+        .maybeSingle();
+
       const notifService = require('../services/notificationService');
-      await notifService.notifyVisitorActivity({ chatId, pageTitle, pageUrl }).catch(() => {});
+      await notifService.notifyVisitorActivity({
+        chatId,
+        visitorNumber: vData?.visitor_number || null,
+        pageTitle,
+        pageUrl
+      }).catch(() => {});
     } catch (_) {}
   });
 });
@@ -177,25 +251,62 @@ router.get('/config', async (req, res) => {
     const { data: s } = await supabase.from('settings').select('welcome_message, widget_powered_by').single();
     res.json({
       enabled: true,
-      botName: 'ValueShop25 Support',
+      botName: 'PureSim Support',
       welcomeMessage: s?.welcome_message || 'Hallo!',
-      poweredBy: s?.widget_powered_by || 'ValueShop25 AI'
+      poweredBy: s?.widget_powered_by || 'PureSim AI'
     });
   } catch { res.json({ enabled: true }); }
 });
 
-async function _upsertSession(chatId, pageTitle, supabase, isNew) {
+// ── Chat-Record sicherstellen ────────────────────────────────────────────────
+// Erstellt einen Eintrag in der chats-Tabelle für JEDEN Besucher,
+// auch wenn der Chat nie geöffnet wurde — für den vollständigen Klickpfad
+// im Admin-Dashboard.
+async function _ensureChatRecord(chatId, ip, isNew) {
+  try {
+    const { data: existing } = await supabase
+      .from('chats')
+      .select('id')
+      .eq('id', chatId)
+      .maybeSingle();
+    if (existing) return; // bereits vorhanden
+
+    await supabase.from('chats').insert([{
+      id:          chatId,
+      platform:    'web_widget',
+      status:      'ki',
+      visitor_ip:  ip || null,
+      created_at:  new Date(),
+      updated_at:  new Date()
+    }]);
+  } catch (_) { /* Fehler ignorieren - nie blockieren */ }
+}
+
+// ── Session-Upsert mit voller URL-Tracking ───────────────────────────────────
+async function _upsertSession(chatId, pageTitle, pageUrl, supabase, isNew) {
   try {
     const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     const { data: active } = await supabase.from('visitor_sessions').select('id, page_count')
       .eq('chat_id', chatId).eq('is_active', true).gte('last_seen', cutoff).maybeSingle();
 
     if (active) {
-      await supabase.from('visitor_sessions').update({ last_seen: new Date(), page_count: (active.page_count || 0) + 1, last_page: pageTitle }).eq('id', active.id);
+      await supabase.from('visitor_sessions').update({
+        last_seen:     new Date(),
+        page_count:    (active.page_count || 0) + 1,
+        last_page:     pageTitle,
+        last_page_url: pageUrl || null
+      }).eq('id', active.id);
       return active.id;
     }
     const { data: created } = await supabase.from('visitor_sessions').insert([{
-      chat_id: chatId, started_at: new Date(), last_seen: new Date(), entry_page: pageTitle, last_page: pageTitle, is_active: true
+      chat_id:       chatId,
+      started_at:    new Date(),
+      last_seen:     new Date(),
+      entry_page:    pageTitle,
+      entry_page_url: pageUrl || null,
+      last_page:     pageTitle,
+      last_page_url: pageUrl || null,
+      is_active:     true
     }]).select('id').single();
     return created?.id;
   } catch { return null; }

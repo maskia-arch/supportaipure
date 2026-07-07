@@ -76,7 +76,7 @@ async function handleTelegramUpdate(updateBody) {
     // ── /start ──────────────────────────────────────────────────────────────
     if (text === '/start' || text.startsWith('/start@')) {
       const welcome = settings?.welcome_message
-        || 'Willkommen beim ValueShop25 Support! 👋\n\nIch helfe dir bei Fragen rund um eSIMs und unsere Tarife. Frag mich einfach!\n\n📋 Bestellung prüfen: /order DEINE_INVOICE_ID';
+        || 'Willkommen beim PureSim Support! 👋\n\nIch helfe dir bei Fragen rund um eSIMs und unsere Tarife. Frag mich einfach!\n\n📋 Bestellung prüfen: /order DEINE_INVOICE_ID';
       await tgSend(welcome);
       return;
     }

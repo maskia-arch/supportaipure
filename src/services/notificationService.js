@@ -38,6 +38,18 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000).unref?.();
 
+// ── Besucher-Label formatieren ───────────────────────────────────────────────
+// Besucher#001, Besucher#042, Besucher#1337 …
+// Falls noch keine Nummer vergeben → 'Besucher' (Fallback)
+function _formatVisitor(visitorNumber) {
+  if (!visitorNumber) return 'Besucher';
+  const n = Number(visitorNumber);
+  if (!n || isNaN(n)) return 'Besucher';
+  // Null-Padding: mindestens 3 Stellen
+  const padded = String(n).padStart(3, '0');
+  return `Besucher#${padded}`;
+}
+
 function _init() {
   if (_wpInitTried) return _wpReady;
   _wpInitTried = true;
@@ -69,7 +81,7 @@ function _init() {
   const priv = sanitize(rawPriv);
 
   try {
-    _wp.setVapidDetails('mailto:admin@valueshop25.com', pub, priv);
+    _wp.setVapidDetails('mailto:admin@puresim.net', pub, priv);
     _wpReady = true;
     logger.info('[Push] ✅ Web Push bereit');
   } catch (e) {
@@ -157,10 +169,10 @@ const notificationService = {
     });
   },
 
-  // ── NEUER Besucher auf der Website (1.6.76-2) ─────────────────────────────
-  // Wird in widgetRoutes /init für jeden NEUEN Visitor aufgerufen.
+  // ── NEUER Besucher auf der Website ───────────────────────────────────────
+  // Wird in widgetRoutes /init fuer jeden Visitor aufgerufen.
   // Throttle: nur 1x pro chatId in 24h damit kein Spam bei Page-Reloads.
-  async notifyNewVisitor({ chatId, pageTitle, pageUrl, isNew }) {
+  async notifyNewVisitor({ chatId, visitorNumber, pageTitle, pageUrl, isNew }) {
     if (!_init()) return;
     if (!chatId) return;
 
@@ -169,16 +181,17 @@ const notificationService = {
     const last = _firstVisitSent.get(key) || 0;
     if (now - last < FIRST_VISIT_TTL_MS) {
       // Bereits in 24h notified → trotzdem als Activity behandeln
-      return this.notifyVisitorActivity({ chatId, pageTitle, pageUrl });
+      return this.notifyVisitorActivity({ chatId, visitorNumber, pageTitle, pageUrl });
     }
     _firstVisitSent.set(key, now);
-    _lastActivitySent.set(key, { page: String(pageTitle || '').trim(), ts: now });  // Activity-Dedup synchronisieren
+    _lastActivitySent.set(key, { page: String(pageTitle || '').trim(), ts: now });
 
-    const title = isNew === false
-      ? `👋 Wiederkehrender Besucher`
-      : `🆕 Neuer Besucher`;
-    const body  = pageTitle
-      ? `Schaut sich gerade "${String(pageTitle).substring(0, 60)}" an`
+    const vLabel = _formatVisitor(visitorNumber);
+    const title  = isNew === false
+      ? `👋 ${vLabel} ist zurück`
+      : `🔶 ${vLabel} — Neuer Besucher`;
+    const body = pageTitle
+      ? `Schaut sich gerade „${String(pageTitle).substring(0, 55)}“ an`
       : 'Ist gerade auf der Website';
 
     await this._push({
@@ -191,10 +204,10 @@ const notificationService = {
     });
   },
 
-  // ── Besucher-Aktivität (Page-Wechsel/Verweilen) (1.6.76-2) ────────────────
+  // ── Besucher-Aktivität (Page-Wechsel) ───────────────────────────────────
   // Wird in widgetRoutes /beacon und /activity aufgerufen.
-  // Throttle: pro chatId max 1x in 5min.
-  async notifyVisitorActivity({ chatId, pageTitle, pageUrl }) {
+  // Throttle: pro chatId max 1x bei derselben Seite innerhalb 3 Sekunden.
+  async notifyVisitorActivity({ chatId, visitorNumber, pageTitle, pageUrl }) {
     if (!_init()) return;
     if (!chatId) return;
 
@@ -211,12 +224,13 @@ const notificationService = {
     }
     _lastActivitySent.set(key, { page, ts: now });
 
-    const body = page
-      ? `Auf "${page.substring(0, 70)}"`
+    const vLabel = _formatVisitor(visitorNumber);
+    const body   = page
+      ? `Auf „${page.substring(0, 65)}“`
       : 'Ist weiterhin auf der Website';
 
     await this._push({
-      title: `👁 Besucher`,
+      title: `👁 ${vLabel}`,
       body,
       icon:  '/icon-192.png',
       // Eindeutiger Tag pro Push → Benachrichtigungen ersetzen sich NICHT,

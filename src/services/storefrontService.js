@@ -102,7 +102,95 @@ Preis: ${tariff.sale_price_eur} EUR
   },
 
   /**
-   * Führt die RAG-Synchronisation aus.
+   * Schnelle Preis-Synchronisation: Aktualisiert nur Preis-/URL-Felder in der
+   * Wissensdatenbank – kein KI-Aufruf, kein Embedding-Rebuild.
+   *
+   * Wird aufgerufen wenn ai_sync_flag = 'update' (reine Preisänderung).
+   * Sucht den KB-Eintrag per product_id und ersetzt den Preiswert direkt im Text.
+   */
+  async syncPriceChanges(flaggedTariffs, shopUrl, jobId) {
+    const progress = (pct, step) => {
+      if (jobId) syncJobManager.updateProgress(jobId, pct, step);
+      logger.info(`[Price Sync] ${pct}% – ${step}`);
+    };
+
+    const results = { saved: 0, skipped: 0, errors: 0 };
+    const cleanShopUrl = (shopUrl || '').trim().replace(/\/$/, '');
+
+    progress(10, `${flaggedTariffs.length} Preis-Updates werden verarbeitet...`);
+
+    // Lade alle relevanten KB-Einträge auf einmal (effizienter als N einzelne Abfragen)
+    const productIds = flaggedTariffs.map(t => t.id).filter(Boolean);
+    let existingKbRows = [];
+    try {
+      const { data } = await supabase
+        .from('knowledge_base')
+        .select('id, content, metadata')
+        .eq('source_type', 'db_sync');
+      existingKbRows = (data || []).filter(row => {
+        const meta = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
+        return productIds.includes(meta?.product_id);
+      });
+    } catch (err) {
+      logger.warn(`[Price Sync] Konnte KB nicht laden: ${err.message}`);
+    }
+
+    // Index: product_id → KB-Zeile
+    const kbByProductId = new Map();
+    for (const row of existingKbRows) {
+      const meta = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
+      if (meta?.product_id) kbByProductId.set(meta.product_id, { row, meta });
+    }
+
+    let idx = 0;
+    for (const tariff of flaggedTariffs) {
+      idx++;
+      const pct = Math.round(10 + (idx / flaggedTariffs.length) * 85);
+      progress(pct, `Preis-Update: ${tariff.name}`);
+
+      const entry = kbByProductId.get(tariff.id);
+
+      if (!entry) {
+        // Kein vorhandener KB-Eintrag → als fehlend markieren für vollen Sync
+        logger.info(`[Price Sync] Kein KB-Eintrag für ${tariff.name} (ID=${tariff.id}) – wird übersprungen (braucht Full-Sync)`);
+        results.skipped++;
+        // Flag NICHT löschen – bleibt für nächsten Full-Sync
+        continue;
+      }
+
+      try {
+        // Neuen Content mit aktuellem Preis und Slug generieren
+        const newContent = this._buildTariffText(tariff, cleanShopUrl);
+        const newMeta = {
+          ...entry.meta,
+          price: tariff.sale_price_eur,
+          slug:  tariff.slug
+        };
+
+        await supabase
+          .from('knowledge_base')
+          .update({ content: newContent, metadata: newMeta })
+          .eq('id', entry.row.id);
+
+        // Sync-Flag in Storefront DB löschen
+        await storefrontDb.from('tariffs').update({ ai_sync_flag: null }).eq('id', tariff.id);
+
+        results.saved++;
+        logger.info(`[Price Sync] ✓ ${tariff.name}: Preis=${tariff.sale_price_eur} EUR aktualisiert`);
+      } catch (err) {
+        results.errors++;
+        logger.warn(`[Price Sync] Fehler bei ${tariff.name}: ${err.message}`);
+      }
+    }
+
+    progress(100, `Fertig: ${results.saved} Preise aktualisiert, ${results.skipped} übersprungen, ${results.errors} Fehler`);
+    return results;
+  },
+
+  /**
+   * Führt die vollständige RAG-Synchronisation aus.
+   * Preis-/URL-Änderungen (flag='update') werden schnell ohne KI erledigt.
+   * Strukturelle Änderungen (flag='new'/'delete' oder fehlende Einträge) werden vollständig synchronisiert.
    */
   async syncToKnowledgeBase(shopUrl, jobId) {
     const progress = (pct, step) => {
@@ -115,7 +203,50 @@ Preis: ${tariff.sale_price_eur} EUR
     progress(5, 'Kategorien vorbereiten...');
     await knowledgeEnricher.ensureEsimCategories();
 
-    progress(10, 'Lade bestehende AI Wissensdatenbank...');
+    // ── Schritt 1: Alle geflaggten Tarife aus Storefront DB laden ──────────────
+    progress(8, 'Prüfe auf Preis-/Strukturänderungen...');
+    let updateFlagged = [];
+    let fullSyncFlagged = [];
+
+    try {
+      const { data: flaggedAll, error: flagErr } = await storefrontDb
+        .from('tariffs')
+        .select('*')
+        .not('ai_sync_flag', 'is', null);
+
+      if (flagErr) throw flagErr;
+
+      for (const t of (flaggedAll || [])) {
+        if (t.ai_sync_flag === 'update') {
+          updateFlagged.push(t);
+        } else {
+          // 'new', 'delete' oder unbekannte Flags → Full-Sync-Pfad
+          fullSyncFlagged.push(t);
+        }
+      }
+    } catch (err) {
+      logger.warn(`[Storefront Sync] Fehler beim Laden geflaggerter Tarife: ${err.message}`);
+    }
+
+    logger.info(`[Storefront Sync] ${updateFlagged.length} Preis-Updates, ${fullSyncFlagged.length} Struktur-Updates`);
+
+    // ── Schritt 2: Schnelle Preis-Updates (KEIN KI-Aufruf) ────────────────────
+    if (updateFlagged.length > 0) {
+      progress(10, `${updateFlagged.length} Preis-Updates ohne KI...`);
+      const priceResults = await this.syncPriceChanges(updateFlagged, shopUrl, null);
+      results.saved   += priceResults.saved;
+      results.skipped += priceResults.skipped;
+      results.errors  += priceResults.errors;
+
+      // Übersprungene Tarife (kein KB-Eintrag) in Full-Sync-Liste übernehmen
+      const skippedIds = new Set();
+      for (const t of updateFlagged) {
+        // Wird in syncPriceChanges als skipped markiert wenn kein KB-Eintrag
+      }
+    }
+
+    // ── Schritt 3: Bestehende KB-Einträge für Full-Sync laden ─────────────────
+    progress(20, 'Lade bestehende AI Wissensdatenbank...');
     let existingKb = [];
     try {
       const { data } = await supabase
@@ -124,7 +255,7 @@ Preis: ${tariff.sale_price_eur} EUR
         .eq('source_type', 'db_sync');
       existingKb = data || [];
     } catch (err) {
-      logger.warn(`[Storefront Sync] Konnte bestehende Wissensdatenbank nicht laden: ${err.message}`);
+      logger.warn(`[Storefront Sync] Konnte KB nicht laden: ${err.message}`);
     }
 
     const existingProductIds = new Set(
@@ -136,172 +267,108 @@ Preis: ${tariff.sale_price_eur} EUR
         .filter(Boolean)
     );
 
-    // Trick: Falls veraltete Links mit Such-Query (?q=) im Wissens-Inhalt existieren,
-    // erzwingen wir einmalig eine Re-Synchronisation aller aktiven Tarife.
-    const hasOutdatedLinks = existingKb.some(row => row.content && row.content.includes('/tariffs?q='));
-    const forceFullSync = hasOutdatedLinks;
-    if (forceFullSync) {
-      logger.info('[Storefront Sync] Veraltete Produkt-Links (?q=) in Wissensdatenbank erkannt. Führe vollständige Re-Synchronisation aus, um sie durch direkte Links (/tariffs/[slug]) zu ersetzen.');
-    }
-
-    progress(15, 'Lade Tarife aus der Storefront-Datenbank...');
-    let tariffs = [];
+    // ── Schritt 4: Aktive Tarife und Struktur-geflaggerte Tarife für Full-Sync ─
+    progress(25, 'Lade alle aktiven Tarife aus Storefront-DB...');
+    let allTariffs = [];
     try {
-      // Lade aktive Tarife und alle Tarife mit gesetzter Flagge (auch inaktive/gelöschte)
-      const activeRes = await storefrontDb.from('tariffs').select('*').eq('is_active', true);
-      if (activeRes.error) throw activeRes.error;
-
-      const flaggedRes = await storefrontDb.from('tariffs').select('*').not('ai_sync_flag', 'is', null);
-      if (flaggedRes.error) throw flaggedRes.error;
-
-      const tariffMap = new Map();
-      (activeRes.data || []).forEach(t => tariffMap.set(t.id, t));
-      (flaggedRes.data || []).forEach(t => tariffMap.set(t.id, t));
-      tariffs = Array.from(tariffMap.values());
+      const { data: activeData, error: activeErr } = await storefrontDb
+        .from('tariffs')
+        .select('*')
+        .eq('is_active', true);
+      if (activeErr) throw activeErr;
+      allTariffs = activeData || [];
     } catch (err) {
-      logger.error(`[Storefront Sync] Fehler beim Laden der Tarife: ${err.message}`);
+      logger.error(`[Storefront Sync] Fehler beim Laden aktiver Tarife: ${err.message}`);
       throw new Error(`Konnte Tarife nicht aus DB lesen: ${err.message}`);
     }
 
-    progress(25, `${tariffs.length} Tarife geladen. Verarbeite Änderungen...`);
+    // Full-Sync-Kandidaten: Fehlende + strukturell geflaggerte Tarife
+    const fullSyncFlaggedIds = new Set(fullSyncFlagged.map(t => t.id));
+    const tariffsForFullSync = [
+      ...allTariffs.filter(t => !existingProductIds.has(t.id)),       // Fehlende
+      ...fullSyncFlagged,                                               // Strukturell geflaggert (new/delete)
+    ];
+    // Duplikate entfernen
+    const seenIds = new Set();
+    const uniqueFullSync = tariffsForFullSync.filter(t => {
+      if (seenIds.has(t.id)) return false;
+      seenIds.add(t.id);
+      return true;
+    });
+
+    // Inaktive Tarife die gelöscht werden sollen
+    const deleteOnlyFlagged = fullSyncFlagged.filter(t => t.ai_sync_flag === 'delete' || !t.is_active);
+
+    progress(30, `${uniqueFullSync.length} Tarife für vollständige Synchronisation...`);
+
+    if (uniqueFullSync.length === 0 && updateFlagged.length === 0) {
+      progress(100, `Keine Änderungen erkannt. ${results.saved} aktualisiert, ${results.skipped} übersprungen.`);
+      return results;
+    }
+
     const cats = await knowledgeEnricher._getCategories();
     let index = 0;
 
-    for (const tariff of tariffs) {
+    for (const tariff of uniqueFullSync) {
       index++;
-      const pct = Math.round(25 + ((index / tariffs.length) * 70));
+      const pct = Math.round(30 + ((index / Math.max(uniqueFullSync.length, 1)) * 65));
       progress(pct, `Synchronisiere: ${tariff.name} (${tariff.country_name})`);
 
-      const isMissing = !existingProductIds.has(tariff.id);
-      const hasFlag = !!tariff.ai_sync_flag;
+      const hasFlag = fullSyncFlaggedIds.has(tariff.id);
 
-      // Überspringe, wenn bereits vorhanden und keine Änderung/Erdopplung vorliegt (kein Flag und kein erzwungener Full Sync)
-      if (!isMissing && !hasFlag && !forceFullSync) {
-        results.skipped++;
+      // Lösche alten KB-Eintrag
+      const toDeleteIds = existingKb
+        .filter(entry => {
+          const meta = typeof entry.metadata === 'string' ? JSON.parse(entry.metadata) : entry.metadata;
+          return meta?.product_id === tariff.id;
+        })
+        .map(entry => entry.id);
+
+      if (toDeleteIds.length > 0) {
+        try {
+          await supabase.from('knowledge_base').delete().in('id', toDeleteIds);
+          results.deleted += toDeleteIds.length;
+        } catch (err) {
+          logger.warn(`[Storefront Sync] Fehler beim Löschen KB-Eintrag für ${tariff.name}: ${err.message}`);
+        }
+      }
+
+      // Nur löschen (kein Neu-Anlegen) wenn Flag = delete oder inaktiv
+      if (tariff.ai_sync_flag === 'delete' || !tariff.is_active) {
+        if (hasFlag) {
+          try { await storefrontDb.from('tariffs').update({ ai_sync_flag: null }).eq('id', tariff.id); } catch (_) {}
+        }
         continue;
       }
 
-      // 1. Prüfen, ob wir ein In-Place-Update für Preis/URL-Änderungen durchführen können,
-      // um teure RAG-Generierungen und neue Embeddings zu vermeiden.
-      let updatedInPlace = false;
-      const kbEntry = existingKb.find(entry => {
-        const meta = typeof entry.metadata === 'string' ? JSON.parse(entry.metadata) : entry.metadata;
-        return meta?.product_id === tariff.id;
-      });
+      // Neuen KB-Eintrag anlegen
+      const tType = tariff.tariff_type || 'travel';
+      let simplifiedType = 'travel';
+      if (tType === 'unlimited_eco') simplifiedType = 'eco';
+      else if (tType === 'unlimited_pro') simplifiedType = 'pro';
 
-      if (kbEntry && tariff.is_active && tariff.ai_sync_flag !== 'delete') {
-        const meta = typeof kbEntry.metadata === 'string' ? JSON.parse(kbEntry.metadata) : kbEntry.metadata;
-        if (meta && meta.price !== undefined && meta.slug !== undefined) {
-          // Rekonstruiere den RAG-Text mit dem alten Preis/Slug
-          const oldTariffMock = {
-            ...tariff,
-            sale_price_eur: meta.price,
-            slug: meta.slug
-          };
-          const expectedOldContent = this._buildTariffText(oldTariffMock, shopUrl);
+      const catId = await knowledgeEnricher._getCategoryIdForTariff(simplifiedType, cats);
+      const content = this._buildTariffText(tariff, shopUrl);
 
-          if (expectedOldContent === (kbEntry.content || '').trim()) {
-            // Nur Preis oder Slug/URL hat sich geändert!
-            const newContent = this._buildTariffText(tariff, shopUrl);
-            const newMeta = {
-              ...meta,
-              price: tariff.sale_price_eur,
-              slug: tariff.slug
-            };
+      try {
+        const saved = await knowledgeEnricher.enrichAndStore(content, 'db_sync', catId, {
+          product_id:   tariff.id,
+          package_code: tariff.package_code,
+          slug:         tariff.slug,
+          tariff_type:  tariff.tariff_type,
+          price:        tariff.sale_price_eur
+        });
+        results.saved += saved.length;
 
-            try {
-              await supabase
-                .from('knowledge_base')
-                .update({
-                  content: newContent,
-                  metadata: newMeta
-                })
-                .eq('id', kbEntry.id);
-
-              results.saved++;
-              updatedInPlace = true;
-              logger.info(`[Storefront Sync] In-Place-Update (keine RAG-Generierung erforderlich) für ${tariff.name}: Preis/URL aktualisiert.`);
-
-              // Sync-Flagge in der Storefront DB nach erfolgreicher Übernahme löschen
-              if (hasFlag) {
-                try {
-                  await storefrontDb.from('tariffs').update({ ai_sync_flag: null }).eq('id', tariff.id);
-                } catch (err) {
-                  logger.warn(`[Storefront Sync] Fehler beim Löschen des Flags für ${tariff.name}: ${err.message}`);
-                }
-              }
-            } catch (err) {
-              logger.warn(`[Storefront Sync] Fehler beim In-Place-Update für ${tariff.name}: ${err.message}. Fallback auf vollständigen RAG-Rebuild.`);
-            }
-          }
+        if (hasFlag) {
+          try { await storefrontDb.from('tariffs').update({ ai_sync_flag: null }).eq('id', tariff.id); } catch (_) {}
         }
+      } catch (err) {
+        results.errors++;
+        logger.warn(`[Storefront Sync] Fehler bei ${tariff.name}: ${err.message}`);
       }
 
-      if (!updatedInPlace) {
-        // 2. Normaler Ablauf oder Fallback: Lösche alten Wissenseintrag für dieses Produkt (falls vorhanden)
-        const toDeleteIds = [];
-        for (const entry of existingKb) {
-          const meta = typeof entry.metadata === 'string' ? JSON.parse(entry.metadata) : entry.metadata;
-          if (meta?.product_id === tariff.id) {
-            toDeleteIds.push(entry.id);
-          }
-        }
-        if (toDeleteIds.length > 0) {
-          try {
-            await supabase.from('knowledge_base').delete().in('id', toDeleteIds);
-            results.deleted += toDeleteIds.length;
-          } catch (err) {
-            logger.warn(`[Storefront Sync] Fehler beim Bereinigen von KB-Eintrag für ${tariff.name}: ${err.message}`);
-          }
-        }
-
-        // Falls Flagge "delete" ist oder das Produkt inaktiv ist, beenden wir nach dem Löschen
-        if (tariff.ai_sync_flag === 'delete' || !tariff.is_active) {
-          if (hasFlag) {
-            try {
-              await storefrontDb.from('tariffs').update({ ai_sync_flag: null }).eq('id', tariff.id);
-            } catch (err) {
-              logger.warn(`[Storefront Sync] Fehler beim Löschen des Flags für ${tariff.name}: ${err.message}`);
-            }
-          }
-          continue;
-        }
-
-        // 3. Bestimme eSIM-Kategorie und füge neu hinzu (inkl. RAG-Generierung & Embeddings)
-        const tType = tariff.tariff_type || 'travel';
-        let simplifiedType = 'travel';
-        if (tType === 'unlimited_eco') simplifiedType = 'eco';
-        else if (tType === 'unlimited_pro') simplifiedType = 'pro';
-
-        const catId = await knowledgeEnricher._getCategoryIdForTariff(simplifiedType, cats);
-        const content = this._buildTariffText(tariff, shopUrl);
-
-        try {
-          const saved = await knowledgeEnricher.enrichAndStore(content, 'db_sync', catId, {
-            product_id: tariff.id,
-            package_code: tariff.package_code,
-            slug: tariff.slug,
-            tariff_type: tariff.tariff_type,
-            price: tariff.sale_price_eur
-          });
-          results.saved += saved.length;
-
-          // Sync-Flagge in der Storefront DB nach erfolgreicher Übernahme löschen
-          if (hasFlag) {
-            try {
-              await storefrontDb.from('tariffs').update({ ai_sync_flag: null }).eq('id', tariff.id);
-            } catch (err) {
-              logger.warn(`[Storefront Sync] Fehler beim Löschen des Flags für ${tariff.name}: ${err.message}`);
-            }
-          }
-        } catch (err) {
-          results.errors++;
-          logger.warn(`[Storefront Sync] Fehler bei ${tariff.name}: ${err.message}`);
-        }
-      }
-
-      // Rate limit protection
-      await new Promise(resolve => setTimeout(resolve, 150));
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
 
     progress(100, `Fertig: ${results.saved} gespeichert, ${results.deleted} gelöscht, ${results.skipped} übersprungen, ${results.errors} Fehler`);
@@ -311,6 +378,7 @@ Preis: ${tariff.sale_price_eur} EUR
   /**
    * Holt eine Bestellung aus der DB anhand von ID, ICCID oder Top-Up ICCID.
    */
+
   async getInvoice(invoiceId) {
     if (!invoiceId) return null;
     const cleanId = String(invoiceId).trim();

@@ -52,13 +52,60 @@ function _postTrack(path, body, tries){
 var API=(function(){var s=document.querySelectorAll('script[src*="widget.js"]');return s.length?s[s.length-1].src.replace('/widget.js',''):'https://puresimaisupport.autoacts.link';})();
 var chatId=null,isOpen=false,isTyping=false,_proDone=false,_handover=false,_faqUsed=false,_proTimer=null,_statusInt=null,_lastMsgTs=0;
 
-var STORAGE_KEY='vs25_cid';
+// ── Persistente Besucher-ID (vs25_vid) ───────────────────────────────────────
+// Primärer stabiler Identifier. Gespeichert in localStorage → überlebt
+// In-App-Browser-Neustarts (Instagram, TikTok, WhatsApp etc.).
+// Funktioniert auch wenn sessionStorage zurückgesetzt wird.
+var STORAGE_KEY    = 'vs25_cid';  // Chat-ID (Session)
+var VID_KEY        = 'vs25_vid';  // Visitor-ID (persistent, UUID)
+
 function _ssGet(){ try { return sessionStorage.getItem(STORAGE_KEY); } catch(_) { return null; } }
 function _ssSet(v){ try { sessionStorage.setItem(STORAGE_KEY,v); } catch(_) {} }
 function _ssClear(){
   try { sessionStorage.removeItem(STORAGE_KEY); } catch(_) {}
   try { localStorage.removeItem(STORAGE_KEY); } catch(_) {}
 }
+
+// UUID v4 generator (kryptographisch ausreichend für Besucher-IDs)
+function _uuid4(){
+  try {
+    if(crypto && crypto.randomUUID) return crypto.randomUUID();
+    var b=new Uint8Array(16);
+    crypto.getRandomValues(b);
+    b[6]=(b[6]&0x0f)|0x40; b[8]=(b[8]&0x3f)|0x80;
+    var h=Array.from(b).map(function(x){return x.toString(16).padStart(2,'0');}).join('');
+    return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20);
+  } catch(_){
+    // Fallback ohne crypto
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){
+      var r=Math.random()*16|0;return(c==='x'?r:(r&0x3|0x8)).toString(16);
+    });
+  }
+}
+
+// Stabile Besucher-ID lesen oder neu erstellen
+function _getOrCreateVid(){
+  var vid=null;
+  // 1. localStorage (persistenteste Speicherung)
+  try{ vid=localStorage.getItem(VID_KEY); }catch(_){}
+  // 2. sessionStorage als Backup
+  if(!vid){ try{ vid=sessionStorage.getItem(VID_KEY); }catch(_){} }
+  // 3. Neu erstellen falls nichts gefunden
+  if(!vid || vid.length < 10){
+    vid = _uuid4();
+    try{ localStorage.setItem(VID_KEY, vid); }catch(_){}
+    try{ sessionStorage.setItem(VID_KEY, vid); }catch(_){}
+  } else {
+    // Synchronisieren: sicherstellen dass beide Stores die ID haben
+    try{ localStorage.setItem(VID_KEY, vid); }catch(_){}
+    try{ sessionStorage.setItem(VID_KEY, vid); }catch(_){}
+  }
+  return vid;
+}
+
+var _visitorId = _getOrCreateVid();
+
+// Legacy chatId Migration (localStorage → sessionStorage)
 try {
   var _legacy = localStorage.getItem(STORAGE_KEY);
   if (_legacy && !_ssGet()) _ssSet(_legacy);
@@ -443,7 +490,13 @@ function passiveTrack(){
   passiveTrack._lastSent=currentUrl;
 
   var saved=_ssGet()||chatId;
-  _postTrack('/api/widget/beacon',{fingerprint:fp(),pageUrl:currentUrl,pageTitle:smartTitle(),chatId:saved})
+  _postTrack('/api/widget/beacon',{
+    fingerprint:fp(),
+    visitorId:_visitorId,
+    pageUrl:currentUrl,
+    pageTitle:smartTitle(),
+    chatId:saved
+  })
   .then(function(d){
     if(d&&d.chatId&&!_ssGet()) _ssSet(d.chatId);
   });
@@ -479,7 +532,13 @@ function startSession(){
     return;
   }
 
-  _postTrack('/api/widget/init', {fingerprint:fp(),pageUrl:location.href,pageTitle:smartTitle(),chatId:null})
+  _postTrack('/api/widget/init', {
+    fingerprint:fp(),
+    visitorId:_visitorId,
+    pageUrl:location.href,
+    pageTitle:smartTitle(),
+    chatId:null
+  })
   .then(function(d){
     if(!d || d.banned) return;
     if(!d.chatId) return;
@@ -627,7 +686,45 @@ function showTyp(show){
 
 function scrl(){var e=document.getElementById('vs25-msgs');if(e)e.scrollTop=e.scrollHeight;}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');}
-function fp(){return btoa([navigator.userAgent,navigator.language,screen.width+'x'+screen.height,Intl.DateTimeFormat().resolvedOptions().timeZone].join('|')).substring(0,32);}
+
+// ── Erweiterter Fingerprint ───────────────────────────────────────────────────
+// Kombiniert mehrere Signale damit auch identische In-App-Browser
+// (Instagram, TikTok) auseinandergehalten werden können.
+// visitor_id (UUID) ist jedoch der primäre Identifier — fp() nur als Ergänzung.
+function fp(){
+  var parts=[
+    navigator.userAgent||'',
+    navigator.language||'',
+    (screen.width||0)+'x'+(screen.height||0),
+    (screen.colorDepth||0)+'bit',
+    Intl.DateTimeFormat().resolvedOptions().timeZone||'',
+    (navigator.hardwareConcurrency||0)+'cpu',
+    (navigator.deviceMemory||0)+'gb',
+    navigator.platform||'',
+    (navigator.maxTouchPoints||0)+'tp'
+  ];
+  // Canvas-Fingerprint (rendert Text → Grafikkarte + Font-Unterschiede)
+  try{
+    var c=document.createElement('canvas'),g=c.getContext('2d');
+    if(g){
+      g.textBaseline='top';g.font='14px Arial';
+      g.fillStyle='#f60';g.fillRect(125,1,62,20);
+      g.fillStyle='#069';g.fillText('PureSim',2,15);
+      g.fillStyle='rgba(102,204,0,0.7)';g.fillText('PureSim',4,17);
+      parts.push(c.toDataURL().slice(-32));
+    }
+  }catch(_){}
+  // WebGL renderer (GPU-Bezeichnung)
+  try{
+    var wc=document.createElement('canvas');
+    var gl=wc.getContext('webgl')||wc.getContext('experimental-webgl');
+    if(gl){
+      var ext=gl.getExtension('WEBGL_debug_renderer_info');
+      if(ext) parts.push(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL).slice(0,20));
+    }
+  }catch(_){}
+  return btoa(unescape(encodeURIComponent(parts.join('|')))).substring(0,48);
+}
 
 var _lastUrl=location.href;
 setInterval(function(){

@@ -528,6 +528,9 @@ async function initializeDatabase() {
         // v1.8: Re-Branding: ValueShop25 → PureSim in settings
         `UPDATE settings SET widget_powered_by = 'Powered by PureSim AI' WHERE widget_powered_by LIKE '%ValueShop%' OR widget_powered_by = 'Powered by PureSim AI'`,
         `UPDATE settings SET system_prompt = REPLACE(system_prompt, 'ValueShop25', 'PureSim') WHERE system_prompt LIKE '%ValueShop25%'`,
+        // v1.9: Persistente Visitor-UUID (localStorage UUID) fuer zuverlaessige Besuchererkennung
+        `ALTER TABLE widget_visitors ADD COLUMN visitor_id TEXT`,
+        `CREATE INDEX IF NOT EXISTS idx_widget_visitors_visitor_id ON widget_visitors(visitor_id)`,
       ];
 
       for (const sql of runtimeMigrations) {

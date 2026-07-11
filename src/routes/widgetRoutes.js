@@ -32,8 +32,9 @@ router.post('/beacon', async (req, res) => {
   setImmediate(async () => {
     try {
       const ip = visitorService._getClientIp(req);
+      const visitorId = (req.body.visitorId || '').trim().substring(0, 64) || null;
       const { chatId, isNew, visitorNumber } = await visitorService.getOrCreateVisitor(
-        ip, req.headers['user-agent'], req.body.fingerprint
+        ip, req.headers['user-agent'], req.body.fingerprint, visitorId
       );
       const banCheck = await visitorService.isBanned(ip, chatId);
       if (banCheck.banned) return;
@@ -141,7 +142,10 @@ function getSmartTitle(url, titleFromBrowser) {
 router.post('/init', async (req, res) => {
   try {
     const ip = visitorService._getClientIp(req);
-    const { chatId, isNew, visitorNumber } = await visitorService.getOrCreateVisitor(ip, req.headers['user-agent'], req.body.fingerprint);
+    const visitorId = (req.body.visitorId || '').trim().substring(0, 64) || null;
+    const { chatId, isNew, visitorNumber } = await visitorService.getOrCreateVisitor(
+      ip, req.headers['user-agent'], req.body.fingerprint, visitorId
+    );
     const banCheck = await visitorService.isBanned(ip, chatId);
     if (banCheck.banned) return res.json({ banned: true, message: 'Zugang gesperrt.' });
 

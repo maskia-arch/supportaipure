@@ -15,14 +15,26 @@ const logger = require('../utils/logger');
 
 const visitorService = {
   
-  async getOrCreateVisitor(ip, userAgent, fingerprint) {
+  async getOrCreateVisitor(ip, userAgent, fingerprint, visitorId) {
     const ipHash = this._hashIp(ip);
 
     try {
       let existing = null;
 
-      // 1. Per Fingerprint suchen (stärkster Identifier)
-      if (fingerprint) {
+      // ── 1. Visitor-ID (UUID aus localStorage) — stärkster und eindeutigster Identifier
+      // Jeder Browser generiert beim ersten Besuch eine UUID die in localStorage gespeichert
+      // wird. Damit können auch In-App-Browser (Instagram, TikTok) korrekt zugeordnet werden.
+      if (visitorId && visitorId.length >= 10) {
+        const { data: byVid } = await supabase
+          .from('widget_visitors')
+          .select('*')
+          .eq('visitor_id', visitorId)
+          .maybeSingle();
+        if (byVid) existing = byVid;
+      }
+
+      // ── 2. Fingerprint — zweite Option wenn visitor_id noch nicht gespeichert war
+      if (!existing && fingerprint) {
         const { data: byFp } = await supabase
           .from('widget_visitors')
           .select('*')
@@ -33,27 +45,35 @@ const visitorService = {
         if (byFp) existing = byFp;
       }
 
-      // 2. Per IP-Hash suchen (Fallback, z.B. wenn Fingerprint fehlt oder sich ändert)
+      // ── 3. IP-Hash — NUR als letzter Fallback (unzuverlässig bei shared networks)
+      // Nur nutzen wenn IP innerhalb der letzten 2 Stunden aktiv war (reduziert Kollisionen)
       if (!existing && ipHash) {
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
         const { data: byIp } = await supabase
           .from('widget_visitors')
           .select('*')
           .eq('ip_hash', ipHash)
+          .gte('last_seen', twoHoursAgo)
           .order('last_seen', { ascending: false })
           .limit(1)
           .maybeSingle();
         if (byIp) existing = byIp;
       }
 
-      // 3. Bestehenden Besucher aktualisieren — SELBE chatId zurückgeben
+      // ── 4. Bestehenden Besucher aktualisieren — SELBE chatId zurückgeben
       if (existing) {
-        await supabase.from('widget_visitors').update({
+        const updates = {
           last_seen:   new Date(),
           user_agent:  userAgent || existing.user_agent,
           fingerprint: fingerprint || existing.fingerprint,
           ip_hash:     ipHash,
           ip:          ip || existing.ip
-        }).eq('chat_id', existing.chat_id);
+        };
+        // visitor_id nachträglich setzen falls noch nicht vorhanden
+        if (visitorId && !existing.visitor_id) {
+          updates.visitor_id = visitorId;
+        }
+        await supabase.from('widget_visitors').update(updates).eq('chat_id', existing.chat_id);
 
         return {
           chatId:        existing.chat_id,
@@ -63,15 +83,19 @@ const visitorService = {
         };
       }
 
-      // 4. Nächste sequenzielle Besucher-Nummer vergeben
+      // ── 5. Nächste sequenzielle Besucher-Nummer vergeben
       const visitorNumber = await this._nextVisitorNumber();
 
-      // 5. Neuen Besucher anlegen — chatId aus IP-Hash + Timestamp
-      const idBase = ipHash.substring(0, 10);
+      // ── 6. Neuen Besucher anlegen
+      // chatId basiert auf visitor_id (wenn vorhanden) oder IP-Hash + Timestamp
+      const idBase = visitorId
+        ? visitorId.replace(/-/g, '').substring(0, 10)
+        : ipHash.substring(0, 10);
       const chatId = 'web_' + idBase + '_' + Date.now().toString(36).slice(-4);
 
       const { data: created, error: insErr } = await supabase.from('widget_visitors').insert([{
         chat_id:        chatId,
+        visitor_id:     visitorId || null,
         visitor_number: visitorNumber,
         ip:             ip,
         ip_hash:        ipHash,
@@ -83,7 +107,12 @@ const visitorService = {
 
       if (insErr) {
         logger.warn('[Visitor] Insert Fehler: ' + insErr.message);
-        // Beim Insert-Fehler nochmals per fingerprint/IP suchen (Parallel-Request race)
+        // Race-condition: nochmals per visitor_id / fingerprint suchen
+        if (visitorId) {
+          const { data: byVid2 } = await supabase
+            .from('widget_visitors').select('chat_id, visitor_number').eq('visitor_id', visitorId).maybeSingle();
+          if (byVid2?.chat_id) return { chatId: byVid2.chat_id, visitor: byVid2, isNew: false, visitorNumber: byVid2.visitor_number || null };
+        }
         if (fingerprint) {
           const { data: byFp2 } = await supabase
             .from('widget_visitors').select('chat_id, visitor_number').eq('fingerprint', fingerprint).maybeSingle();
@@ -92,7 +121,6 @@ const visitorService = {
         const { data: byIp2 } = await supabase
           .from('widget_visitors').select('chat_id, visitor_number').eq('ip_hash', ipHash).maybeSingle();
         if (byIp2?.chat_id) return { chatId: byIp2.chat_id, visitor: byIp2, isNew: false, visitorNumber: byIp2.visitor_number || null };
-        // Letzter Fallback: chatId ohne DB-Eintrag verwenden
         return { chatId, visitor: null, isNew: true, visitorNumber };
       }
 
@@ -105,6 +133,7 @@ const visitorService = {
   },
 
   // ── Sequenz: nächste Besucher-Nummer vergeben ──────────────────────────────
+
   // Atomic in SQLite und Postgres: UPDATE mit RETURNING / Fallback via select+update
   async _nextVisitorNumber() {
     try {

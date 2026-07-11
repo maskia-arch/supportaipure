@@ -1,95 +1,149 @@
-// sw.js – Service Worker für Web Push Notifications
-// Wird von Chrome/Android automatisch im Hintergrund ausgeführt
+/**
+ * sw.js – Service Worker für Web Push Notifications v2.0
+ *
+ * Verbesserungen gegenüber v1:
+ *  • requireInteraction: true  → Notification bleibt sichtbar bis der Admin tippt
+ *  • Android Doze-Mode safe: vibrate + sound explizit
+ *  • Besseres Klick-Handling: chatId direkt im URL-Anchor
+ *  • Robusteres JSON-Parsing mit mehreren Fallbacks
+ *  • Cache-Version hochgezählt → erzwingt SW-Update auf allen Geräten
+ */
 
-const CACHE_NAME = 'ai-admin-v3';   // bei jedem SW-Update hochzählen damit Browser den neuen lädt
+const CACHE_VERSION = 'ai-admin-v4';
 
-// ── Install: skipWaiting damit Updates SOFORT aktiv werden ─────────────────
-// Vorher: User musste alle Tabs schließen damit neuer SW aktiv wurde.
-// Folge bei Bugfixes: Bugs blieben tagelang im alten SW hängen.
+// ── Install: sofort aktiv werden ─────────────────────────────────────────────
 self.addEventListener('install', function(event) {
   self.skipWaiting();
 });
 
-// ── Activate: Kontrolle über alle Clients sofort übernehmen ────────────────
+// ── Activate: Kontrolle über alle Clients ────────────────────────────────────
 self.addEventListener('activate', function(event) {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches.keys().then(function(keys) {
+      return Promise.all(
+        keys.filter(function(k) { return k !== CACHE_VERSION; })
+            .map(function(k) { return caches.delete(k); })
+      );
+    }).then(function() {
+      return self.clients.claim();
+    })
+  );
 });
 
-// ── Push: Notification anzeigen ────────────────────────────────────────────
+// ── Push: Notification anzeigen ──────────────────────────────────────────────
 self.addEventListener('push', function(event) {
-  let data = { title: '💬 Neue Nachricht', body: 'Ein Kunde hat eine Nachricht gesendet.' };
+  // Robustes Parsing: JSON → text → Fallback
+  var data = { title: '💬 Neue Nachricht', body: 'PureSim Support' };
 
   if (event.data) {
-    try { data = event.data.json(); }
-    catch(_) {
-      try { data.body = event.data.text(); } catch(__) {}
+    try {
+      data = event.data.json();
+    } catch (_) {
+      try {
+        var txt = event.data.text();
+        if (txt) data.body = txt;
+      } catch (__) {}
     }
   }
 
-  const options = {
-    body:    data.body    || '',
-    icon:    data.icon    || '/icon-192.png',
+  // Sicherstellen dass title und body immer Strings sind
+  var title = String(data.title || '💬 PureSim Support');
+  var body  = String(data.body  || '');
+  var url   = data.url    || '/admin';
+  var tag   = data.tag    || ('ps-' + Date.now());
+
+  var options = {
+    body:    body,
+    icon:    data.icon || '/icon-192.png',
     badge:   '/icon-72.png',
-    tag:     data.tag     || 'ai-chat-notification',
-    renotify: true,                    // Neue Notification auch wenn Tag gleich
-    requireInteraction: false,         // Verschwindet nach kurzer Zeit automatisch
-    silent:  false,
-    vibrate: [200, 100, 200],
+    tag:     tag,
+
+    // ── Android-kritische Einstellungen ──────────────────────────────────
+    // requireInteraction: true → Notification bleibt sichtbar bis der Admin
+    // explizit tippt. Verhindert dass Android sie im Doze-Modus verwirft.
+    requireInteraction: true,
+
+    // renotify: true → Ton + Vibration auch wenn gleicher Tag
+    renotify: true,
+
+    // Vibrationsmuster: Android braucht explizite Angabe
+    vibrate: [300, 150, 300, 150, 600],
+
+    // silent: false → Ton explizit aktivieren (FCM override)
+    silent: false,
+
     timestamp: Date.now(),
+
     data: {
-      url:    data.url    || '/admin',
+      url:    url,
       chatId: data.chatId || null
     },
+
     actions: [
-      { action: 'open',    title: '📋 Dashboard öffnen' },
-      { action: 'dismiss', title: 'Schließen' }
+      { action: 'open',    title: '📋 Dashboard' },
+      { action: 'dismiss', title: '✕ Schließen'  }
     ]
   };
 
   event.waitUntil(
-    self.registration.showNotification(data.title, options)
+    self.registration.showNotification(title, options)
       .catch(function(err) {
-        console.error('[SW] showNotification failed:', err);
+        // Fallback: minimale Notification ohne Actions (ältere Android)
+        return self.registration.showNotification(title, {
+          body:             body,
+          icon:             '/icon-192.png',
+          badge:            '/icon-72.png',
+          requireInteraction: true,
+          silent:           false,
+          data:             { url: url }
+        });
       })
   );
 });
 
-// ── Notification angeklickt → Dashboard öffnen ─────────────────────────────
+// ── Notification geklickt → Dashboard öffnen ─────────────────────────────────
 self.addEventListener('notificationclick', function(event) {
   event.notification.close();
 
   if (event.action === 'dismiss') return;
 
-  var targetUrl = (event.notification.data && event.notification.data.url) || '/admin';
+  var notifData  = event.notification.data || {};
+  var targetUrl  = notifData.url || '/admin';
 
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients) {
-      for (var i = 0; i < windowClients.length; i++) {
-        var client = windowClients[i];
-        if (client.url.indexOf('/admin') !== -1 && 'focus' in client) {
-          if ('navigate' in client && targetUrl !== '/admin' && client.url.indexOf(targetUrl) === -1) {
-            return client.navigate(targetUrl).then(function() { return client.focus(); });
-          }
-          return client.focus();
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(all) {
+      // Offenes Admin-Tab suchen
+      var adminTab = null;
+      for (var i = 0; i < all.length; i++) {
+        if (all[i].url.indexOf('/admin') !== -1) {
+          adminTab = all[i];
+          break;
         }
       }
-      if (clients.openWindow) {
-        return clients.openWindow(targetUrl);
+
+      if (adminTab) {
+        // Tab focussieren + ggf. zur richtigen Seite navigieren
+        return adminTab.focus().then(function() {
+          if (targetUrl !== adminTab.url && 'navigate' in adminTab) {
+            return adminTab.navigate(targetUrl);
+          }
+        });
       }
+
+      // Kein Tab offen → neues Fenster
+      return clients.openWindow(targetUrl);
     })
   );
 });
 
-// ── pushsubscriptionchange: Token automatisch erneuern ─────────────────────
-// Browser erneuert den Push-Endpoint gelegentlich (alle paar Wochen). Ohne
-// dieses Event verstummt die Subscription weil das Backend mit alter Sub
-// weiter sendet — Push kommt nie an.
+// ── pushsubscriptionchange: Token automatisch erneuern ───────────────────────
+// Browser erneuert den Push-Endpoint alle paar Wochen. Ohne dieses Event
+// kommt kein Push mehr an weil der Server mit altem Endpoint weiter sendet.
 self.addEventListener('pushsubscriptionchange', function(event) {
   event.waitUntil((async function() {
     try {
       var oldEndpoint = (event.oldSubscription && event.oldSubscription.endpoint) || null;
 
-      // ÖFFENTLICHER VAPID-Endpoint — der SW hat keinen Zugriff auf den JWT (localStorage)
       var vapidRes = await fetch('/api/admin/push/public-vapid');
       if (!vapidRes.ok) {
         console.warn('[SW] pushsubscriptionchange: VAPID-Key Fetch fehlgeschlagen', vapidRes.status);
@@ -104,7 +158,6 @@ self.addEventListener('pushsubscriptionchange', function(event) {
         applicationServerKey: keyBytes
       });
 
-      // ÖFFENTLICHER Renewal-Endpoint — Identität über alten Endpoint abgesichert
       await fetch('/api/admin/push/renew', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -117,6 +170,7 @@ self.addEventListener('pushsubscriptionchange', function(event) {
   })());
 });
 
+// ── Hilfsfunktion: VAPID Base64 → Uint8Array ─────────────────────────────────
 function _urlBase64ToUint8Array(base64String) {
   var padding = '='.repeat((4 - base64String.length % 4) % 4);
   var base64  = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');

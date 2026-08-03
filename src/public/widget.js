@@ -317,20 +317,26 @@ var CSS = [
 '.vs25-chip{display:inline-flex;align-items:center;gap:6px;background:var(--chip-bg);color:var(--chip-c);border:1.5px solid var(--chip-border);font-size:.82rem;font-weight:600;padding:8px 15px;border-radius:9999px;cursor:pointer;line-height:1.2;transition:all .2s cubic-bezier(.34,1.56,.64,1);box-shadow:0 2px 6px rgba(0,0,0,.03);touch-action:manipulation}',
 '.vs25-chip:hover{background:var(--chip-hbg);color:var(--chip-hc);border-color:var(--chip-hbg);transform:translateY(-2px);box-shadow:0 6px 18px rgba(37,99,235,.3)}',
 '.vs25-chip:active{transform:scale(.95)}',
-'.vs25-ir{padding:12px 14px;background:var(--bar-bg);display:flex;gap:10px;align-items:flex-end;flex-shrink:0;border-top:1px solid var(--divider);transition:background .3s}',
-'.vs25-inp{flex:1;background:var(--inp-bg);color:var(--inp-c);border:1.5px solid var(--inp-border);border-radius:20px;padding:12px 18px;font-size:.935rem;font-family:inherit;resize:none;max-height:100px;overflow-y:auto;line-height:1.45;outline:none;transition:all .2s ease}',
-'.vs25-inp:focus{border-color:var(--inp-focus-border);box-shadow:var(--inp-focus-glow)}',
+'.vs25-bot-avatar{width:32px;height:32px;border-radius:50%;background:#ffffff;border:1px solid #e2e8f0;object-fit:contain;padding:2px;flex-shrink:0;margin-top:2px;box-shadow:0 2px 6px rgba(0,0,0,.06)}',
+'.vs25-msg.b{display:flex;align-items:flex-start;gap:8px;align-self:flex-start}',
+'.vs25-msg.b .vs25-bub{background:var(--bub-b);color:var(--bub-b-txt);border-radius:18px 18px 18px 4px;box-shadow:var(--bub-b-shadow);border:1px solid rgba(0,0,0,.05)}',
+'.vs25-input-card{margin:10px 14px 14px;background:var(--bar-bg);border:1.5px solid var(--inp-border);border-radius:20px;padding:12px 14px 10px;box-shadow:0 4px 16px rgba(15,23,42,.06);display:flex;flex-direction:column;gap:6px;position:relative;flex-shrink:0;transition:all .2s}',
+'.vs25-input-card:focus-within{border-color:var(--inp-focus-border);box-shadow:var(--inp-focus-glow)}',
+'.vs25-inp{width:100%;background:transparent;color:var(--inp-c);border:none;outline:none;font-size:.935rem;font-family:inherit;resize:none;min-height:42px;max-height:100px;overflow-y:auto;line-height:1.45}',
 '.vs25-inp::placeholder{color:#94a3b8;font-weight:400}',
-'.vs25-snd{width:48px;height:48px;border-radius:50%;flex-shrink:0;background:linear-gradient(135deg,#1d4ed8,#2563eb);border:none;color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .22s cubic-bezier(.34,1.56,.64,1);box-shadow:0 4px 14px rgba(37,99,235,.4);touch-action:manipulation}',
-'.vs25-snd:hover{background:linear-gradient(135deg,#1e40af,#1d4ed8);transform:scale(1.08);box-shadow:0 6px 20px rgba(37,99,235,.55)}',
-'.vs25-snd:active{transform:scale(.92)}',
-'.vs25-snd svg{width:20px;height:20px;fill:white}',
-'.vs25-snd:disabled{background:linear-gradient(135deg,#cbd5e1,#e2e8f0);cursor:not-allowed;box-shadow:none;transform:none;opacity:.7}',
-'.vs25-ft{text-align:center;padding:6px 8px;color:var(--ft-c);font-size:.62rem;font-weight:500;background:var(--bar-bg);flex-shrink:0;transition:background .3s;letter-spacing:.02em}',
+'.vs25-input-footer{display:flex;align-items:center;justify-content:between;padding-top:4px;border-top:1px solid rgba(0,0,0,.03)}',
+'.vs25-input-tools{display:flex;align-items:center;gap:12px;color:#94a3b8;flex:1}',
+'.vs25-tool-btn{background:none;border:none;color:#94a3b8;cursor:pointer;padding:4px;display:flex;align-items:center;justify-content:center;border-radius:50%;transition:color .18s,background .18s}',
+'.vs25-tool-btn:hover{color:#2563eb;background:rgba(37,99,235,.08)}',
+'.vs25-snd-btn{background:none;border:none;color:#94a3b8;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:6px;border-radius:50%;transition:all .2s cubic-bezier(.34,1.56,.64,1);touch-action:manipulation}',
+'.vs25-snd-btn:hover{color:#2563eb;transform:scale(1.1)}',
+'.vs25-snd-btn:active{transform:scale(.92)}',
+'.vs25-snd-btn svg{width:22px;height:22px;fill:currentColor}',
+'.vs25-snd-btn:disabled{color:#cbd5e1;cursor:not-allowed;transform:none;opacity:.6}',
+'.vs25-ft{text-align:center;padding:4px 8px 8px;color:var(--ft-c);font-size:.62rem;font-weight:500;background:var(--bar-bg);flex-shrink:0;transition:background .3s;letter-spacing:.02em}',
 '@media(max-width:539px){',
 '  .vs25-ft{padding-bottom:calc(6px + env(safe-area-inset-bottom,0px))}',
-'  .vs25-ir{padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}',
-'  .vs25-ir.vs25-is-last{padding-bottom:calc(14px + env(safe-area-inset-bottom,0px))}',
+'  .vs25-input-card{margin:8px 10px 10px}',
 '  .vs25-inp{font-size:1rem}',
 '  .vs25-chip{padding:9px 16px;font-size:.83rem}',
 '}'
@@ -360,14 +366,14 @@ function build(){
           '<svg viewBox="0 0 24 24"><path d="M19 11H7.83l4.88-4.88c.39-.39.39-1.03 0-1.42-.39-.39-1.02-.39-1.41 0l-6.59 6.59c-.39.39-.39 1.02 0 1.41l6.59 6.59c.39.39 1.02.39 1.41 0 .39-.39.39-1.02 0-1.41L7.83 13H19c.55 0 1-.45 1-1s-.45-1-1-1z"/></svg>'+
         '</button>'+
         '<div class="vs25-hdr-av">'+
-          '<svg viewBox="0 0 24 24" class="vs25-bot-icon"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.38-1 1.72V7h2a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3v-8a3 3 0 0 1 3-3h2V5.72A2.001 2.001 0 0 1 10 4a2 2 0 0 1 2-2M7.5 12a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3m9 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3M10 17h4v-1h-4z"/></svg>'+
+          '<img src="/logo.png" alt="PureSim Logo" style="width:34px;height:34px;object-fit:contain;border-radius:50%;background:white;padding:2px;" onError="this.onerror=null;this.src=\'https://puresim.net/logo.png\';" />'+
           '<span class="vs25-av-dot online" id="vs25-av-dot"></span>'+
         '</div>'+
         '<div class="vs25-hdr-info">'+
-          '<div class="vs25-hdr-name">PureSim Support</div>'+
+          '<div class="vs25-hdr-name">Questions? Chat with us.</div>'+
           '<div class="vs25-hdr-sub" id="vs25-hdr-sub">'+
             '<span class="vs25-hdr-sub-dot online" id="vs25-hdr-sub-dot"></span>'+
-            '<span id="vs25-hdr-sub-text">KI Assistent · Online</span>'+
+            '<span id="vs25-hdr-sub-text">Typically replies under 2 hours.</span>'+
           '</div>'+
         '</div>'+
         '<button class="vs25-theme-btn" id="vs25-theme-btn" title="Hell/Dunkel" aria-label="Hell/Dunkel wechseln">'+
@@ -384,11 +390,25 @@ function build(){
         '<div class="vs25-fq-label">✨ Schnellfragen</div>'+
         '<div class="vs25-fqg" id="vs25-fqg"></div>'+
       '</div>'+
-      '<div class="vs25-ir">'+
-        '<textarea class="vs25-inp" id="vs25-inp" placeholder="Schreib eine Nachricht…" rows="1" autocomplete="off" autocorrect="on" autocapitalize="sentences"></textarea>'+
-        '<button class="vs25-snd" id="vs25-snd" aria-label="Nachricht senden">'+
-          '<svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>'+
-        '</button>'+
+      '<div class="vs25-input-card">'+
+        '<textarea class="vs25-inp" id="vs25-inp" placeholder="Compose your message…" rows="2" autocomplete="off" autocorrect="on" autocapitalize="sentences"></textarea>'+
+        '<div class="vs25-input-footer">'+
+          '<div class="vs25-input-tools">'+
+            '<button type="button" class="vs25-tool-btn" id="vs25-emoji-btn" title="Emoji einfügen">'+
+              '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">'+
+                '<circle cx="12" cy="12" r="10" />'+
+                '<path d="M8 14s1.5 2 4 2 4-2 4-2" />'+
+                '<line x1="9" y1="9" x2="9.01" y2="9" stroke-width="3" stroke-linecap="round" />'+
+                '<line x1="15" y1="9" x2="15.01" y2="9" stroke-width="3" stroke-linecap="round" />'+
+              '</svg>'+
+            '</button>'+
+          '</div>'+
+          '<button class="vs25-snd-btn" id="vs25-snd" aria-label="Nachricht senden">'+
+            '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">'+
+              '<path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>'+
+            '</svg>'+
+          '</button>'+
+        '</div>'+
       '</div>'+
       '<div class="vs25-ft"><span id="vs25-ft-text">Powered by PureSim AI</span></div>'+
     '</div>';
@@ -402,8 +422,14 @@ function build(){
   document.getElementById('vs25-inv').onclick=function(e){if(e.target.id==='vs25-ix'){hideInv();return;}hideInv();openChat();};
   document.getElementById('vs25-ix').onclick=function(e){e.stopPropagation();hideInv();};
   document.getElementById('vs25-inp').addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});
+  document.getElementById('vs25-emoji-btn').onclick=function(){
+    var i=document.getElementById('vs25-inp');
+    if(i){ i.value += ' 😊'; i.focus(); }
+  };
   document.getElementById('vs25-inp').addEventListener('input',function(){
     this.style.height='auto';this.style.height=Math.min(this.scrollHeight,100)+'px';
+    var snd=document.getElementById('vs25-snd');
+    if(snd){ if(this.value.trim().length > 0) snd.classList.add('has-text'); else snd.classList.remove('has-text'); }
     hideFaq();
   });
 
@@ -631,7 +657,8 @@ function addMsg(role,text,noScroll){
   var d=document.createElement('div'); d.className='vs25-msg '+role;
   var t=new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
   var ticks = role === 'u' ? '<span class="vs25-ticks">✓✓</span>' : '';
-  d.innerHTML='<div class="vs25-bub"><span class="vs25-txt">'+esc(text)+'</span><span class="vs25-ts">'+t+ticks+'</span></div>';
+  var avatar = role === 'b' ? '<img src="/logo.png" alt="PureSim Logo" class="vs25-bot-avatar" onError="this.onerror=null;this.src=\'https://puresim.net/logo.png\';" />' : '';
+  d.innerHTML=avatar+'<div class="vs25-bub"><span class="vs25-txt">'+esc(text)+'</span><span class="vs25-ts">'+t+ticks+'</span></div>';
   el.appendChild(d); if(!noScroll) scrl();
 }
 
@@ -639,7 +666,8 @@ function showTyp(show){
   isTyping=show;var ex=document.getElementById('vs25-typ');
   if(!show){if(ex)ex.remove();return;}if(ex) return;
   var d=document.createElement('div');d.id='vs25-typ';d.className='vs25-msg b vs25-typ';
-  d.innerHTML='<div class="vs25-bub"><span></span><span></span><span></span></div>';
+  var avatar = '<img src="/logo.png" alt="PureSim Logo" class="vs25-bot-avatar" onError="this.onerror=null;this.src=\'https://puresim.net/logo.png\';" />';
+  d.innerHTML=avatar+'<div class="vs25-bub"><span></span><span></span><span></span></div>';
   document.getElementById('vs25-msgs').appendChild(d);scrl();
 }
 

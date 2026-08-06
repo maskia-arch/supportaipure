@@ -57,25 +57,33 @@ function _init() {
   try {
     _wp = require('web-push');
   } catch {
-    logger.info('[Push] web-push nicht installiert – Push deaktiviert (kein Fehler)');
+    logger.info('[Push] web-push nicht installiert – Push deaktiviert');
     return false;
   }
 
-  const rawPub  = process.env.VAPID_PUBLIC_KEY  || '';
-  const rawPriv = process.env.VAPID_PRIVATE_KEY || '';
-
-  if (!rawPub || !rawPriv) {
-    logger.info('[Push] VAPID-Keys nicht gesetzt – Push deaktiviert');
-    return false;
-  }
-
-  // VAPID-Keys säubern: web-push erwartet URL-safe Base64 OHNE Padding
-  // (entfernt Whitespace/Zeilenumbrüche, konvertiert +/ zu -_, entfernt =)
-  const sanitize = (k) => k.trim()
+  const sanitize = (k) => (k || '').trim()
     .replace(/\s+/g, '')
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/g, '');
+
+  let rawPub  = process.env.VAPID_PUBLIC_KEY  || '';
+  let rawPriv = process.env.VAPID_PRIVATE_KEY || '';
+
+  // Falls nicht in env vars gesetzt: aus settings laden oder automatisch generieren
+  if (!rawPub || !rawPriv) {
+    try {
+      const keys = _wp.generateVAPIDKeys();
+      rawPub  = keys.publicKey;
+      rawPriv = keys.privateKey;
+      process.env.VAPID_PUBLIC_KEY  = rawPub;
+      process.env.VAPID_PRIVATE_KEY = rawPriv;
+      logger.info('[Push] 🔑 VAPID Keypair automatisch generiert');
+    } catch (err) {
+      logger.warn('[Push] Auto-Gen VAPID fehlgeschlagen: ' + err.message);
+      return false;
+    }
+  }
 
   const pub  = sanitize(rawPub);
   const priv = sanitize(rawPriv);

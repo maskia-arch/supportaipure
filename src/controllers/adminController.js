@@ -533,10 +533,12 @@ const adminController = {
         await supabase.from('admin_subscriptions').delete().eq('endpoint', subscription.endpoint);
       } catch (_) {}
 
-      // Neu speichern — endpoint-Spalte MUSS gesetzt sein (NOT NULL)
+      // Neu speichern — id MUSS generiert werden (Primary Key in SQLite)
+      const subId = 'sub_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
       const { error } = await supabase.from('admin_subscriptions').insert([{
+        id:                subId,
         endpoint:          subscription.endpoint,
-        subscription_data: subscription,   // JSONB → Objekt direkt
+        subscription_data: typeof subscription === 'string' ? subscription : JSON.stringify(subscription),
         device_label:      req.headers['user-agent']?.substring(0, 80) || null
       }]);
 
@@ -551,6 +553,15 @@ const adminController = {
   // Damit der Service Worker den Key OHNE JWT laden kann (SW hat kein localStorage).
   async getPublicVapidKey(req, res) {
     let key = process.env.VAPID_PUBLIC_KEY || '';
+    if (!key) {
+      try {
+        const webpush = require('web-push');
+        const keys = webpush.generateVAPIDKeys();
+        process.env.VAPID_PUBLIC_KEY  = keys.publicKey;
+        process.env.VAPID_PRIVATE_KEY = keys.privateKey;
+        key = keys.publicKey;
+      } catch (_) {}
+    }
     key = key.trim().replace(/\s+/g, '').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
     res.json({ publicKey: key, configured: !!key });
   },
@@ -577,9 +588,11 @@ const adminController = {
 
       // Neuen Endpoint sauber (de-dupliziert) speichern
       try { await supabase.from('admin_subscriptions').delete().eq('endpoint', subscription.endpoint); } catch (_) {}
+      const subId = 'sub_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
       const { error } = await supabase.from('admin_subscriptions').insert([{
+        id:                subId,
         endpoint:          subscription.endpoint,
-        subscription_data: subscription,
+        subscription_data: typeof subscription === 'string' ? subscription : JSON.stringify(subscription),
         device_label:      (req.headers['user-agent'] || 'sw-renew').substring(0, 80)
       }]);
       if (error) return res.status(500).json({ error: error.message });

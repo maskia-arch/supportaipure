@@ -45,6 +45,17 @@ router.post('/beacon', async (req, res) => {
       // Sicherstellen dass ein chats-Eintrag existiert (auch ohne Chat-Öffnung)
       await _ensureChatRecord(chatId, ip, isNew);
 
+      // Kundenerkennung durchführen (falls E-Mail, User-ID, Ref oder ICCID im Body mitgesendet wurden)
+      if (req.body.email || req.body.userId || req.body.checkoutRef || req.body.iccid || req.body.customerName) {
+        await visitorService.identifyVisitor(chatId, {
+          email: req.body.email,
+          userId: req.body.userId,
+          checkoutRef: req.body.checkoutRef,
+          iccid: req.body.iccid,
+          name: req.body.customerName
+        }).catch(() => {});
+      }
+
       // Visitor-Session aktualisieren (damit Live-Dashboard aktuell bleibt)
       await _upsertSession(chatId, pageTitle, pageUrl, supabase, isNew);
 
@@ -155,6 +166,17 @@ router.post('/init', async (req, res) => {
     // Sicherstellen dass ein chats-Eintrag existiert (auch ohne Chat-Öffnung)
     await _ensureChatRecord(chatId, ip, isNew);
 
+    // Kundenerkennung durchführen (falls E-Mail, User-ID, Ref oder ICCID im Body mitgesendet wurden)
+    if (req.body.email || req.body.userId || req.body.checkoutRef || req.body.iccid || req.body.customerName) {
+      await visitorService.identifyVisitor(chatId, {
+        email: req.body.email,
+        userId: req.body.userId,
+        checkoutRef: req.body.checkoutRef,
+        iccid: req.body.iccid,
+        name: req.body.customerName
+      }).catch(() => {});
+    }
+
     await visitorService.logActivity(chatId, `Besucht: ${smartTitle}`, pageUrl, smartTitle);
     await _upsertSession(chatId, smartTitle, pageUrl, supabase, isNew);
 
@@ -178,6 +200,40 @@ router.post('/init', async (req, res) => {
       } catch (_) {}
     });
   } catch (err) { res.status(500).json({ error: 'Fail' }); }
+});
+
+/**
+ * Express-Endpoint: /api/widget/identify
+ * Ermöglicht der Storefront (z. B. nach Auth-Login oder Checkout-Eingabe),
+ * den aktuellen Besucher eindeutig zu identifizieren.
+ */
+router.post('/identify', async (req, res) => {
+  try {
+    const chatId = req.headers['x-chat-id'] || req.body.chatId;
+    if (!chatId) return res.status(400).json({ error: 'Missing chatId' });
+
+    const result = await visitorService.identifyVisitor(chatId, {
+      email: req.body.email,
+      userId: req.body.userId,
+      checkoutRef: req.body.checkoutRef,
+      iccid: req.body.iccid,
+      name: req.body.customerName || req.body.name
+    });
+
+    if (result.found && result.info) {
+      // Wenn der Kunde identifiziert wurde, sofort eine Push an den Admin senden
+      const notifService = require('../services/notificationService');
+      await notifService.notifyVisitorActivity({
+        chatId,
+        pageTitle: `Kunde identifiziert: ${result.info.name || result.info.email}`,
+        pageUrl: req.body.pageUrl || ''
+      }).catch(() => {});
+    }
+
+    res.json({ success: true, identified: result.found, info: result.info || null });
+  } catch (err) {
+    res.status(500).json({ error: 'Identify failed', message: err.message });
+  }
 });
 
 router.post('/message', async (req, res) => {

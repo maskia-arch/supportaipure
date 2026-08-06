@@ -469,21 +469,63 @@ function build(){
   });
 }
 
+function _autoDetectIdentity() {
+  var data = {};
+  try {
+    var sp = new URLSearchParams(location.search);
+    if (sp.get('email')) data.email = sp.get('email');
+    if (sp.get('ref')) data.checkoutRef = sp.get('ref');
+    if (sp.get('iccid')) data.iccid = sp.get('iccid');
+
+    for (var i = 0; i < localStorage.length; i++) {
+      var key = localStorage.key(i);
+      if (key && (key.indexOf('sb-') === 0 || key.indexOf('auth') >= 0 || key.indexOf('user') >= 0)) {
+        try {
+          var val = localStorage.getItem(key);
+          if (val && val.indexOf('@') >= 0) {
+            var parsed = JSON.parse(val);
+            if (parsed && parsed.user && parsed.user.email) {
+              data.email = parsed.user.email;
+              data.userId = parsed.user.id;
+              if (parsed.user.user_metadata && (parsed.user.user_metadata.full_name || parsed.user.user_metadata.name)) {
+                data.customerName = parsed.user.user_metadata.full_name || parsed.user.user_metadata.name;
+              }
+            } else if (parsed && parsed.email) {
+              data.email = parsed.email;
+              if (parsed.name || parsed.full_name) data.customerName = parsed.name || parsed.full_name;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+  return data;
+}
+
+window.PureSimSupport = {
+  identify: function(details) {
+    if (!details || typeof details !== 'object') return;
+    var id = chatId || _ssGet();
+    if (!id) return;
+    _postTrack('/api/widget/identify', Object.assign({ chatId: id }, details), 2);
+  }
+};
+
 function passiveTrack(){
-  // Nur tracken wenn sich die URL geändert hat (verhindert doppeltes
-  // Inkrement beim Verweilen auf derselben Seite).
   var currentUrl=location.href;
   if(passiveTrack._lastSent===currentUrl) return;
   passiveTrack._lastSent=currentUrl;
 
   var saved=_ssGet()||chatId;
-  _postTrack('/api/widget/beacon',{
+  var identity=_autoDetectIdentity();
+
+  _postTrack('/api/widget/beacon', Object.assign({
     fingerprint:fp(),
     visitorId:_visitorId,
     pageUrl:currentUrl,
     pageTitle:smartTitle(),
     chatId:saved
-  })
+  }, identity))
   .then(function(d){
     if(d&&d.chatId&&!_ssGet()) _ssSet(d.chatId);
   });
@@ -499,9 +541,8 @@ function startSession(){
         var ir = document.querySelector('.vs25-ir');
         if(ir) ir.classList.add('vs25-is-last');
       }else if(d.poweredBy){
-        ft.textContent=d.poweredBy;  // Server-Wert gewinnt (z.B. "Powered by PureSim AI")
+        ft.textContent=d.poweredBy;
       }
-      // Falls poweredBy undefined/nicht im Response: Fallback bleibt "Powered by PureSim AI"
     }
     if(d.botName){
       var nameEl = document.querySelector('.vs25-hdr-name');
@@ -510,27 +551,29 @@ function startSession(){
   }).catch(function(){});
 
   var saved=_ssGet();
+  var identity=_autoDetectIdentity();
 
   if(saved){
     chatId=saved;
+    if(identity.email || identity.checkoutRef || identity.iccid) {
+      window.PureSimSupport.identify(identity);
+    }
     loadHist();
     startStatusPoll();
-    // Kein zusätzlicher passiveTrack hier — wird bereits in build() aufgerufen
     return;
   }
 
-  _postTrack('/api/widget/init', {
+  _postTrack('/api/widget/init', Object.assign({
     fingerprint:fp(),
     visitorId:_visitorId,
     pageUrl:location.href,
     pageTitle:smartTitle(),
     chatId:null
-  })
+  }, identity))
   .then(function(d){
     if(!d || d.banned) return;
     if(!d.chatId) return;
     chatId=d.chatId; _ssSet(chatId);
-    // passiveTrack._lastSent synchronisieren damit /init + /beacon nicht doppeln
     passiveTrack._lastSent=location.href;
     if(d.welcome) addMsg('b',d.welcome);
     loadHist(); startStatusPoll();

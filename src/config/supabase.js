@@ -531,6 +531,14 @@ async function initializeDatabase() {
         // v1.9: Persistente Visitor-UUID (localStorage UUID) fuer zuverlaessige Besuchererkennung
         `ALTER TABLE widget_visitors ADD COLUMN visitor_id TEXT`,
         `CREATE INDEX IF NOT EXISTS idx_widget_visitors_visitor_id ON widget_visitors(visitor_id)`,
+        // Kundenerkennung & Zuordnung (E-Mail, Name, User-ID)
+        `ALTER TABLE widget_visitors ADD COLUMN customer_email TEXT`,
+        `ALTER TABLE widget_visitors ADD COLUMN customer_name TEXT`,
+        `ALTER TABLE widget_visitors ADD COLUMN user_id TEXT`,
+        `CREATE INDEX IF NOT EXISTS idx_widget_visitors_email ON widget_visitors(customer_email)`,
+        `ALTER TABLE chats ADD COLUMN customer_email TEXT`,
+        `ALTER TABLE chats ADD COLUMN customer_name TEXT`,
+        `CREATE INDEX IF NOT EXISTS idx_chats_email ON chats(customer_email)`,
         // v1.9.1: System-Prompt-Update fuer dynamische Tarife (1-365 Tage) und Re-Branding Clean-Up
         `UPDATE settings SET widget_powered_by = 'Powered by PureSim AI' WHERE widget_powered_by LIKE '%ValueShop%' OR widget_powered_by = '' OR widget_powered_by IS NULL`,
         `UPDATE settings SET system_prompt = 'Du bist ein hochprofessioneller, freundlicher und verkaufsorientierter eSIM-Verkaufsberater für Reisende. Dein Ziel ist es, dem Kunden durch eine strukturierte Bedarfsanalyse die perfekte eSIM für seine Reise zu empfehlen und ihn zum Kauf zu führen.

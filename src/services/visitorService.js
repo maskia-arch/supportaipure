@@ -12,6 +12,7 @@
 const crypto = require('crypto');
 const supabase = require('../config/supabase');
 const logger = require('../utils/logger');
+const customerService = require('./customerService');
 
 const visitorService = {
   
@@ -284,6 +285,53 @@ const visitorService = {
     return { success: true, ipHash };
   },
   
+  async identifyVisitor(chatId, identityDetails = {}) {
+    if (!chatId) return { success: false };
+
+    try {
+      const info = await customerService.lookupCustomerInfo(identityDetails);
+      if (!info.found) return { success: false, found: false };
+
+      const updates = {};
+      if (info.email) updates.customer_email = info.email;
+      if (info.name) updates.customer_name = info.name;
+      if (info.userId) updates.user_id = info.userId;
+
+      // Metadaten als JSON speichern
+      const meta = {
+        customer_status: info.customerStatus,
+        completed_orders: info.completedCount,
+        total_spend_eur: info.totalSpendEur,
+        last_tariff: info.lastTariffName,
+        summary_label: info.summaryLabel,
+        identified_at: new Date().toISOString()
+      };
+      updates.metadata = JSON.stringify(meta);
+
+      await supabase.from('widget_visitors').update(updates).eq('chat_id', chatId);
+
+      // Auch `chats` Tabelle aktualisieren
+      const chatUpdates = {};
+      if (info.email) chatUpdates.customer_email = info.email;
+      if (info.name) {
+        chatUpdates.customer_name = info.name;
+        chatUpdates.first_name = info.name;
+      }
+      await supabase.from('chats').update(chatUpdates).eq('id', chatId);
+
+      logger.info(`[Visitor] Kunde erkannt (${chatId}): ${info.summaryLabel}`);
+
+      return {
+        success: true,
+        found: true,
+        info
+      };
+    } catch (err) {
+      logger.warn(`[Visitor] identifyVisitor Fehler (${chatId}): ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  },
+
   _hashIp(ip) {
     return crypto.createHash('sha256').update(ip + 'vs25_salt').digest('hex').substring(0, 32);
   },

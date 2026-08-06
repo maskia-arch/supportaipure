@@ -170,29 +170,31 @@ const notificationService = {
   },
 
   // ── NEUER Besucher auf der Website ───────────────────────────────────────
-  // Wird in widgetRoutes /init fuer jeden Visitor aufgerufen.
-  // Throttle: nur 1x pro chatId in 24h damit kein Spam bei Page-Reloads.
   async notifyNewVisitor({ chatId, visitorNumber, pageTitle, pageUrl, isNew }) {
-    if (!_init()) return;
-    if (!chatId) return;
+    if (!_init() || !chatId) return;
 
     const key = String(chatId);
     const now = Date.now();
     const last = _firstVisitSent.get(key) || 0;
     if (now - last < FIRST_VISIT_TTL_MS) {
-      // Bereits in 24h notified → trotzdem als Activity behandeln
       return this.notifyVisitorActivity({ chatId, visitorNumber, pageTitle, pageUrl });
     }
     _firstVisitSent.set(key, now);
     _lastActivitySent.set(key, { page: String(pageTitle || '').trim(), ts: now });
 
-    const vLabel = _formatVisitor(visitorNumber);
-    const title  = isNew === false
-      ? `👋 ${vLabel} ist zurück`
-      : `🔶 ${vLabel} — Neuer Besucher`;
-    const body = pageTitle
-      ? `Befindet sich auf: ${String(pageTitle).substring(0, 55)}`
-      : 'Ist gerade auf der Website';
+    const identity = await this._getVisitorIdentity(chatId);
+    const vLabel = _formatVisitor(identity?.visitorNumber || visitorNumber);
+
+    let title, body;
+    if (identity?.email || identity?.name) {
+      const who = identity.name ? `${identity.name} (${identity.email || 'Kunde'})` : identity.email;
+      title = isNew === false ? `👋 ${who} ist zurück` : `👤 ${who} — Neuer Besuch`;
+      const statusText = identity.status ? `${identity.status} · ` : '';
+      body = `${statusText}Befindet sich auf: ${String(pageTitle || 'Website').substring(0, 55)}`;
+    } else {
+      title = isNew === false ? `👋 ${vLabel} ist zurück` : `🔶 ${vLabel} — Neuer Besucher`;
+      body = pageTitle ? `Befindet sich auf: ${String(pageTitle).substring(0, 55)}` : 'Ist gerade auf der Website';
+    }
 
     await this._push({
       title,
@@ -205,40 +207,70 @@ const notificationService = {
   },
 
   // ── Besucher-Aktivität (Page-Wechsel) ───────────────────────────────────
-  // Wird in widgetRoutes /beacon und /activity aufgerufen.
-  // Throttle: pro chatId max 1x bei derselben Seite innerhalb 3 Sekunden.
   async notifyVisitorActivity({ chatId, visitorNumber, pageTitle, pageUrl }) {
-    if (!_init()) return;
-    if (!chatId) return;
+    if (!_init() || !chatId) return;
 
     const key  = String(chatId);
     const now  = Date.now();
     const page = String(pageTitle || pageUrl || '').trim();
 
-    // Dedup NUR exakte Doppel-Fires: gleiche Seite innerhalb 3 Sekunden
-    // (z.B. beacon beim Laden + visibilitychange gleichzeitig).
-    // Jeder echte Seitenwechsel löst eine Push aus.
+    // High-Intent Prüfung: Checkout, Warenkorb, Bestellung, Activation umgehen 3-Sek-Throttling
+    const isHighIntent = /\/(checkout|cart|warenkorb|order|activat|install|esim-overview)/i.test(pageUrl || '') ||
+                         /checkout|warenkorb|bestellung|aktivi/i.test(page);
+
     const lastEntry = _lastActivitySent.get(key);
-    if (lastEntry && lastEntry.page === page && (now - lastEntry.ts) < 3000) {
+    if (!isHighIntent && lastEntry && lastEntry.page === page && (now - lastEntry.ts) < 3000) {
       return;
     }
     _lastActivitySent.set(key, { page, ts: now });
 
-    const vLabel = _formatVisitor(visitorNumber);
-    const body   = page
-      ? `Befindet sich auf: ${page.substring(0, 65)}`
-      : 'Ist weiterhin auf der Website';
+    const identity = await this._getVisitorIdentity(chatId);
+    const vLabel = _formatVisitor(identity?.visitorNumber || visitorNumber);
+
+    let title, body;
+    if (identity?.email || identity?.name) {
+      const who = identity.name ? `${identity.name} (${identity.email || 'Kunde'})` : identity.email;
+      title = isHighIntent ? `🛒 ${who}` : `👤 ${who}`;
+      const statusText = identity.status ? `[${identity.status}] ` : '';
+      body = `${statusText}Befindet sich auf: ${page.substring(0, 65)}`;
+    } else {
+      title = isHighIntent ? `🛒 ${vLabel} im Checkout` : `👁 ${vLabel}`;
+      body  = page ? `Befindet sich auf: ${page.substring(0, 65)}` : 'Ist weiterhin auf der Website';
+    }
 
     await this._push({
-      title: `👁 ${vLabel}`,
+      title,
       body,
       icon:  '/icon-192.png',
-      // Eindeutiger Tag pro Push → Benachrichtigungen ersetzen sich NICHT,
-      // jeder Seitenwechsel erscheint einzeln.
       tag:   `visitor-act-${key.substring(0, 8)}-${now}`,
       url:   '/admin#visitors',
+      requireInteraction: isHighIntent,
       chatId
     });
+  },
+
+  async _getVisitorIdentity(chatId) {
+    if (!chatId) return null;
+    try {
+      const { data: v } = await supabase
+        .from('widget_visitors')
+        .select('customer_email, customer_name, visitor_number, metadata')
+        .eq('chat_id', chatId)
+        .maybeSingle();
+      if (!v) return null;
+
+      let meta = {};
+      try { meta = typeof v.metadata === 'string' ? JSON.parse(v.metadata) : (v.metadata || {}); } catch(_) {}
+
+      return {
+        email: v.customer_email || null,
+        name: v.customer_name || null,
+        visitorNumber: v.visitor_number || null,
+        status: meta.customer_status || null,
+        orders: meta.completed_orders !== undefined ? meta.completed_orders : null,
+        spend: meta.total_spend_eur !== undefined ? meta.total_spend_eur : null
+      };
+    } catch (_) { return null; }
   },
 
   // ── Learning Case ────────────────────────────────────────────────────────

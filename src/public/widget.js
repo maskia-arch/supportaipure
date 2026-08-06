@@ -59,8 +59,14 @@ var chatId=null,isOpen=false,isTyping=false,_proDone=false,_handover=false,_faqU
 var STORAGE_KEY    = 'vs25_cid';  // Chat-ID (Session)
 var VID_KEY        = 'vs25_vid';  // Visitor-ID (persistent, UUID)
 
-function _ssGet(){ try { return sessionStorage.getItem(STORAGE_KEY); } catch(_) { return null; } }
-function _ssSet(v){ try { sessionStorage.setItem(STORAGE_KEY,v); } catch(_) {} }
+function _ssGet(){
+  try { return sessionStorage.getItem(STORAGE_KEY) || localStorage.getItem(STORAGE_KEY); } catch(_) { return null; }
+}
+function _ssSet(v){
+  if (!v) return;
+  try { sessionStorage.setItem(STORAGE_KEY, v); } catch(_) {}
+  try { localStorage.setItem(STORAGE_KEY, v); } catch(_) {}
+}
 function _ssClear(){
   try { sessionStorage.removeItem(STORAGE_KEY); } catch(_) {}
   try { localStorage.removeItem(STORAGE_KEY); } catch(_) {}

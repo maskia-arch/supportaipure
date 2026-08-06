@@ -16,20 +16,30 @@ const customerService = require('./customerService');
 
 const visitorService = {
   
-  async getOrCreateVisitor(ip, userAgent, fingerprint, visitorId) {
+  async getOrCreateVisitor(ip, userAgent, fingerprint, visitorId, passedChatId) {
     const ipHash = this._hashIp(ip);
 
     try {
       let existing = null;
 
+      // ── 0. Eindeutige Bindung per übergebener chatId ─────────────────────────────
+      if (passedChatId && typeof passedChatId === 'string' && passedChatId.length >= 5) {
+        const { data: byCid } = await supabase
+          .from('widget_visitors')
+          .select('*')
+          .eq('chat_id', passedChatId)
+          .maybeSingle();
+        if (byCid) existing = byCid;
+      }
+
       // ── 1. Visitor-ID (UUID aus localStorage) — stärkster und eindeutigster Identifier
-      // Jeder Browser generiert beim ersten Besuch eine UUID die in localStorage gespeichert
-      // wird. Damit können auch In-App-Browser (Instagram, TikTok) korrekt zugeordnet werden.
-      if (visitorId && visitorId.length >= 10) {
+      if (!existing && visitorId && visitorId.length >= 10) {
         const { data: byVid } = await supabase
           .from('widget_visitors')
           .select('*')
           .eq('visitor_id', visitorId)
+          .order('last_seen', { ascending: false })
+          .limit(1)
           .maybeSingle();
         if (byVid) existing = byVid;
       }
@@ -46,15 +56,12 @@ const visitorService = {
         if (byFp) existing = byFp;
       }
 
-      // ── 3. IP-Hash — NUR als letzter Fallback (unzuverlässig bei shared networks)
-      // Nur nutzen wenn IP innerhalb der letzten 2 Stunden aktiv war (reduziert Kollisionen)
+      // ── 3. IP-Hash — Zuverlässiger Fallback für selbe IP/Gerät (ohne Datumseinschränkung)
       if (!existing && ipHash) {
-        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
         const { data: byIp } = await supabase
           .from('widget_visitors')
           .select('*')
           .eq('ip_hash', ipHash)
-          .gte('last_seen', twoHoursAgo)
           .order('last_seen', { ascending: false })
           .limit(1)
           .maybeSingle();

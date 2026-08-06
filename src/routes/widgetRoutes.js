@@ -1,9 +1,10 @@
-const express        = require('express');
-const router         = express.Router();
+const express          = require('express');
+const router           = express.Router();
 const messageProcessor = require('../services/messageProcessor');
 const visitorService   = require('../services/visitorService');
 const supabase         = require('../config/supabase');
 const logger           = require('../utils/logger');
+const countryTranslator = require('../utils/countryTranslator');
 
 router.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -33,8 +34,9 @@ router.post('/beacon', async (req, res) => {
     try {
       const ip = visitorService._getClientIp(req);
       const visitorId = (req.body.visitorId || '').trim().substring(0, 64) || null;
+      const passedCid = req.headers['x-chat-id'] || req.body.chatId || null;
       const { chatId, isNew, visitorNumber } = await visitorService.getOrCreateVisitor(
-        ip, req.headers['user-agent'], req.body.fingerprint, visitorId
+        ip, req.headers['user-agent'], req.body.fingerprint, visitorId, passedCid
       );
       const banCheck = await visitorService.isBanned(ip, chatId);
       if (banCheck.banned) return;
@@ -106,13 +108,18 @@ function getSmartTitle(url, titleFromBrowser) {
     const tariffDetail = path.match(/\/tariffs\/([^/?#]+)/i);
     if (tariffDetail) {
       const slug = tariffDetail[1].replace(/-/g, ' ');
-      return `Tarif: ${slug}`;
+      const germanCountry = countryTranslator.translate(slug);
+      return `Tarif: ${germanCountry || slug}`;
     }
 
     // ── PureSim: Tarif-Suche  /tariffs?q=Deutschland ─────────────────────────
     if (/\/tariffs/i.test(path)) {
       const qParam = q.get('q') || q.get('search') || q.get('query');
-      if (qParam) return `Tarif-Suche: ${decodeURIComponent(qParam).substring(0, 40)}`;
+      if (qParam) {
+        const decoded = decodeURIComponent(qParam).substring(0, 40);
+        const germanCountry = countryTranslator.translate(decoded);
+        return `Tarif-Suche: ${germanCountry || decoded}`;
+      }
       return 'Tarifübersicht';
     }
 
@@ -154,8 +161,9 @@ router.post('/init', async (req, res) => {
   try {
     const ip = visitorService._getClientIp(req);
     const visitorId = (req.body.visitorId || '').trim().substring(0, 64) || null;
+    const passedCid = req.headers['x-chat-id'] || req.body.chatId || null;
     const { chatId, isNew, visitorNumber } = await visitorService.getOrCreateVisitor(
-      ip, req.headers['user-agent'], req.body.fingerprint, visitorId
+      ip, req.headers['user-agent'], req.body.fingerprint, visitorId, passedCid
     );
     const banCheck = await visitorService.isBanned(ip, chatId);
     if (banCheck.banned) return res.json({ banned: true, message: 'Zugang gesperrt.' });

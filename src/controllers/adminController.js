@@ -82,6 +82,8 @@ const adminController = {
 
   async getStats(req, res, next) {
     try {
+      // Nur vom Kunden aktiv gestartete Chats zählen (keine reinen System-Tracking-Datensätze)
+      const activeChatFilter = 'message_count.gt.0,platform.eq.telegram,last_message.isnot.null';
       const [
         { count: totalChats },
         { count: activeManual },
@@ -89,8 +91,8 @@ const adminController = {
         { count: pendingLearning },
         tokenUsage
       ] = await Promise.all([
-        supabase.from('chats').select('*', { count: 'exact', head: true }),
-        supabase.from('chats').select('*', { count: 'exact', head: true }).eq('is_manual_mode', true),
+        supabase.from('chats').select('*', { count: 'exact', head: true }).or(activeChatFilter),
+        supabase.from('chats').select('*', { count: 'exact', head: true }).eq('is_manual_mode', true).or(activeChatFilter),
         supabase.from('knowledge_base').select('*', { count: 'exact', head: true }),
         supabase.from('learning_queue').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
         fetchAll('messages', 'prompt_tokens, completion_tokens, embedding_tokens')
@@ -141,7 +143,11 @@ const adminController = {
 
   async getChats(req, res, next) {
     try {
-      const { data, error } = await supabase.from('chats').select('*').order('updated_at', { ascending: false }).limit(100);
+      let query = supabase.from('chats').select('*').order('updated_at', { ascending: false }).limit(100);
+      if (req.query.all !== 'true') {
+        query = query.or('message_count.gt.0,platform.eq.telegram,last_message.isnot.null');
+      }
+      const { data, error } = await query;
       if (error) throw error;
       res.json((data||[]).map(c => ({
         ...c,
@@ -430,11 +436,14 @@ const adminController = {
       const since = new Date(Date.now() - (is24h ? 86400000 : days * 86400000)).toISOString();
 
       // Fetch chat_id so we can deduplicate visitors per day/total
-      const [sessions, chats, activities] = await Promise.all([
+      const [sessions, rawChats, activities] = await Promise.all([
         fetchAll('visitor_sessions', 'chat_id, started_at', q => q.gte('started_at', since)),
-        fetchAll('chats', 'created_at, platform', q => q.gte('created_at', since)),
+        fetchAll('chats', 'created_at, platform, message_count, last_message', q => q.gte('created_at', since)),
         fetchAll('visitor_activities', 'created_at', q => q.gte('created_at', since))
       ]);
+
+      // Nur aktiv vom Kunden gestartete Chats zählen (keine reinen System-Tracking-Datensätze)
+      const chats = rawChats.filter(ch => (ch.message_count > 0) || (ch.platform === 'telegram') || Boolean(ch.last_message));
 
       const buckets = {};
       if (is24h) {

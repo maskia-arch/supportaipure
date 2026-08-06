@@ -2232,6 +2232,11 @@ async function initPushNotifications() {
             _updatePushUI('subscribed');
             return;
         }
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+            console.log('[Push] Permission bereits gewährt — abonniere Push automatisch...');
+            await subscribePush();
+            return;
+        }
         _updatePushUI('unsubscribed');
     } catch(e) {
         console.warn('[Push] SW-Registrierung fehlgeschlagen:', e.message);

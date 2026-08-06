@@ -558,6 +558,8 @@ function startSession(){
     if(identity.email || identity.checkoutRef || identity.iccid) {
       window.PureSimSupport.identify(identity);
     }
+    // WICHTIG: Auch bei bestehendem chatId den Seitenaufruf per /beacon an das Backend melden!
+    passiveTrack();
     loadHist();
     startStatusPoll();
     return;

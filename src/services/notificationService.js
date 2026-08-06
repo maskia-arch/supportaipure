@@ -21,10 +21,10 @@ let _wpInitTried  = false;
 
 // ── Throttle-Maps (in-memory) ────────────────────────────────────────────────
 // Form: { "<chatId>": <timestamp_ms> } - letzte gesendete Notification
-const _firstVisitSent      = new Map();  // 24h Dedup
-const _lastActivitySent    = new Map();  // 5min Dedup
-const FIRST_VISIT_TTL_MS   = 24 * 60 * 60 * 1000;
-const ACTIVITY_THROTTLE_MS = 5 * 60 * 1000;
+const _firstVisitSent      = new Map();  // 2min Dedup (Besuch-Benachrichtigungen)
+const _lastActivitySent    = new Map();  // Activity Dedup
+const FIRST_VISIT_TTL_MS   = 2 * 60 * 1000;      // 2 Minuten (bei neuem Besuch/Tab erneut benachrichtigen)
+const ACTIVITY_THROTTLE_MS = 15 * 1000;          // 15 Sekunden pro identischer Seite
 
 // Periodischer Cleanup damit Maps nicht unbegrenzt wachsen
 setInterval(() => {
@@ -219,7 +219,8 @@ const notificationService = {
                          /checkout|warenkorb|bestellung|aktivi/i.test(page);
 
     const lastEntry = _lastActivitySent.get(key);
-    if (!isHighIntent && lastEntry && lastEntry.page === page && (now - lastEntry.ts) < 3000) {
+    // Nur exakte doppelte Fires auf derselben Seite innerhalb 5s unterdrücken
+    if (!isHighIntent && lastEntry && lastEntry.page === page && (now - lastEntry.ts) < 5000) {
       return;
     }
     _lastActivitySent.set(key, { page, ts: now });

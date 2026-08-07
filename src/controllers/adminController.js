@@ -533,14 +533,24 @@ const adminController = {
         await supabase.from('admin_subscriptions').delete().eq('endpoint', subscription.endpoint);
       } catch (_) {}
 
-      // Neu speichern — id MUSS generiert werden (Primary Key in SQLite)
-      const subId = 'sub_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
-      const { error } = await supabase.from('admin_subscriptions').insert([{
+      // Neu speichern — UUID (randomUUID) verwenden für Postgres UUID & SQLite Kompatibilität
+      const { randomUUID } = require('crypto');
+      const subId = randomUUID();
+      const payload = {
         id:                subId,
         endpoint:          subscription.endpoint,
         subscription_data: typeof subscription === 'string' ? subscription : JSON.stringify(subscription),
         device_label:      req.headers['user-agent']?.substring(0, 80) || null
-      }]);
+      };
+
+      let { error } = await supabase.from('admin_subscriptions').insert([payload]);
+
+      // Fallback: Falls Postgres die ID automatisch generiert (default gen_random_uuid())
+      if (error) {
+        const { id, ...payloadNoId } = payload;
+        const retry = await supabase.from('admin_subscriptions').insert([payloadNoId]);
+        if (!retry.error) error = null;
+      }
 
       if (error) {
         return res.status(500).json({ error: 'Speichern fehlgeschlagen: ' + error.message });
@@ -588,13 +598,21 @@ const adminController = {
 
       // Neuen Endpoint sauber (de-dupliziert) speichern
       try { await supabase.from('admin_subscriptions').delete().eq('endpoint', subscription.endpoint); } catch (_) {}
-      const subId = 'sub_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
-      const { error } = await supabase.from('admin_subscriptions').insert([{
+      const { randomUUID } = require('crypto');
+      const subId = randomUUID();
+      const payload = {
         id:                subId,
         endpoint:          subscription.endpoint,
         subscription_data: typeof subscription === 'string' ? subscription : JSON.stringify(subscription),
         device_label:      (req.headers['user-agent'] || 'sw-renew').substring(0, 80)
-      }]);
+      };
+
+      let { error } = await supabase.from('admin_subscriptions').insert([payload]);
+      if (error) {
+        const { id, ...payloadNoId } = payload;
+        const retry = await supabase.from('admin_subscriptions').insert([payloadNoId]);
+        if (!retry.error) error = null;
+      }
       if (error) return res.status(500).json({ error: error.message });
       res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }

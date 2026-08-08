@@ -567,16 +567,19 @@ const messageProcessor = {
     }
   },
 
-  _updateChatPreview(chatId, message, role) {
-    void (async () => {
-      try {
-        await supabase.from('chats').update({
-          last_message: (message || '').substring(0, 120),
-          last_message_role: role,
-          updated_at: new Date()
-        }).eq('id', chatId);
-      } catch (_) {}
-    })();
+  async _updateChatPreview(chatId, message, role) {
+    try {
+      const { data: current } = await supabase.from('chats').select('message_count').eq('id', chatId).maybeSingle();
+      const newCount = ((current && current.message_count) || 0) + 1;
+      await supabase.from('chats').update({
+        last_message: (message || '').substring(0, 120),
+        last_message_role: role,
+        message_count: newCount,
+        updated_at: new Date()
+      }).eq('id', chatId);
+    } catch (e) {
+      logger.warn(`[_updateChatPreview] Fehler für ${chatId}: ${e.message}`);
+    }
   },
 
   async _getOrCreateChat(chatId, platform, metadata) {

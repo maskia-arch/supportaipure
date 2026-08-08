@@ -145,7 +145,7 @@ const adminController = {
     try {
       let query = supabase.from('chats').select('*').order('updated_at', { ascending: false }).limit(100);
       if (req.query.all !== 'true') {
-        query = query.or('message_count.gt.0,platform.eq.telegram,last_message.isnot.null');
+        query = query.or('message_count.gt.0,last_message.isnot.null,is_manual_mode.eq.true,platform.eq.telegram');
       }
       const { data, error } = await query;
       if (error) throw error;
@@ -208,7 +208,18 @@ const adminController = {
       if (!chatId || !content) return res.status(400).json({ error: 'Fehlende Felder' });
       const { data: chat } = await supabase.from('chats').select('platform').eq('id', chatId).single();
       void (async () => { try { await supabase.from('messages').insert([{ chat_id: chatId, role: 'assistant', content, is_manual: true }]); } catch (_) {} })();
-      void (async () => { try { await supabase.from('chats').update({ last_message: content.substring(0,120), last_message_role: 'assistant', updated_at: new Date() }).eq('id', chatId); } catch (_) {} })();
+      void (async () => {
+        try {
+          const { data: cur } = await supabase.from('chats').select('message_count').eq('id', chatId).maybeSingle();
+          const newCnt = ((cur && cur.message_count) || 0) + 1;
+          await supabase.from('chats').update({
+            last_message: content.substring(0,120),
+            last_message_role: 'assistant',
+            message_count: newCnt,
+            updated_at: new Date()
+          }).eq('id', chatId);
+        } catch (_) {}
+      })();
       if (chat?.platform === 'telegram') await telegramService.sendMessage(chatId, content);
       res.json({ success: true });
     } catch (e) { next(e); }

@@ -810,14 +810,14 @@ class QueryBuilder {
         const compiledParts = [];
         for (const part of orParts) {
           const subParts = part.trim().split('.');
-          if (subParts.length >= 3) {
+          if (subParts.length >= 2) {
             const col = subParts[0];
             const op = subParts[1];
             let val = subParts.slice(2).join('.');
             
-            if (val === 'null') val = null;
-            else if (val === 'true') val = true;
-            else if (val === 'false') val = false;
+            if (val === 'null' || val === '') val = null;
+            else if (val === 'true') val = isPostgres ? true : 1;
+            else if (val === 'false') val = isPostgres ? false : 0;
 
             if (op === 'eq') {
               if (val === null) {
@@ -832,6 +832,31 @@ class QueryBuilder {
               } else {
                 params.push(formatValueForDriver(val));
                 compiledParts.push(`"${col}" != ${placeholderFunc(params.length)}`);
+              }
+            } else if (op === 'gt') {
+              const numVal = isNaN(Number(val)) ? val : Number(val);
+              params.push(formatValueForDriver(numVal));
+              compiledParts.push(`"${col}" > ${placeholderFunc(params.length)}`);
+            } else if (op === 'gte') {
+              const numVal = isNaN(Number(val)) ? val : Number(val);
+              params.push(formatValueForDriver(numVal));
+              compiledParts.push(`"${col}" >= ${placeholderFunc(params.length)}`);
+            } else if (op === 'lt') {
+              const numVal = isNaN(Number(val)) ? val : Number(val);
+              params.push(formatValueForDriver(numVal));
+              compiledParts.push(`"${col}" < ${placeholderFunc(params.length)}`);
+            } else if (op === 'lte') {
+              const numVal = isNaN(Number(val)) ? val : Number(val);
+              params.push(formatValueForDriver(numVal));
+              compiledParts.push(`"${col}" <= ${placeholderFunc(params.length)}`);
+            } else if (op === 'isnot' || op === 'isnot.null') {
+              compiledParts.push(`"${col}" IS NOT NULL`);
+            } else if (op === 'is') {
+              if (val === null || val === 'null') {
+                compiledParts.push(`"${col}" IS NULL`);
+              } else {
+                params.push(formatValueForDriver(val));
+                compiledParts.push(`"${col}" IS ${placeholderFunc(params.length)}`);
               }
             }
           }

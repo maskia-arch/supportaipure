@@ -32,7 +32,7 @@ const visitorService = {
         if (byCid) existing = byCid;
       }
 
-      // ── 1. Visitor-ID (UUID aus localStorage) — stärkster und eindeutigster Identifier
+      // ── 1. Visitor-ID (UUID aus Cookie / localStorage) — stärkster und eindeutigster Identifier
       if (!existing && visitorId && visitorId.length >= 10) {
         const { data: byVid } = await supabase
           .from('widget_visitors')
@@ -44,28 +44,35 @@ const visitorService = {
         if (byVid) existing = byVid;
       }
 
-      // ── 2. Fingerprint — zweite Option wenn visitor_id noch nicht gespeichert war
+      // ── 2. Fingerprint + User-Agent — präzise Ergänzung wenn visitor_id fehlt
       if (!existing && fingerprint) {
-        const { data: byFp } = await supabase
+        let query = supabase
           .from('widget_visitors')
           .select('*')
-          .eq('fingerprint', fingerprint)
+          .eq('fingerprint', fingerprint);
+        if (userAgent) {
+          query = query.eq('user_agent', userAgent);
+        }
+        const { data: byFp } = await query
           .order('last_seen', { ascending: false })
           .limit(1)
           .maybeSingle();
         if (byFp) existing = byFp;
       }
 
-      // ── 3. IP-Hash — Zuverlässiger Fallback für selbe IP/Gerät (ohne Datumseinschränkung)
-      if (!existing && ipHash) {
-        const { data: byIp } = await supabase
+      // ── 3. IP-Hash + User-Agent (24h Zeitfenster) — verhindert NAT-False-Positives für verschiedene Geräte
+      if (!existing && ipHash && userAgent) {
+        const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const { data: byIpUa } = await supabase
           .from('widget_visitors')
           .select('*')
           .eq('ip_hash', ipHash)
+          .eq('user_agent', userAgent)
+          .gte('last_seen', cutoff24h)
           .order('last_seen', { ascending: false })
           .limit(1)
           .maybeSingle();
-        if (byIp) existing = byIp;
+        if (byIpUa) existing = byIpUa;
       }
 
       // ── 4. Bestehenden Besucher aktualisieren — SELBE chatId zurückgeben
@@ -77,7 +84,7 @@ const visitorService = {
           ip_hash:     ipHash,
           ip:          ip || existing.ip
         };
-        // visitor_id nachträglich setzen falls noch nicht vorhanden
+        // visitor_id nachträglich verknüpfen falls noch nicht vorhanden
         if (visitorId && !existing.visitor_id) {
           updates.visitor_id = visitorId;
         }

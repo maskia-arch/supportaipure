@@ -52,24 +52,41 @@ function _postTrack(path, body, tries){
 var API=(function(){var s=document.querySelectorAll('script[src*="widget.js"]');return s.length?s[s.length-1].src.replace('/widget.js',''):'https://puresimaisupport.autoacts.link';})();
 var chatId=null,isOpen=false,isTyping=false,_proDone=false,_handover=false,_faqUsed=false,_proTimer=null,_statusInt=null,_lastMsgTs=0;
 
-// ── Persistente Besucher-ID (vs25_vid) ───────────────────────────────────────
-// Primärer stabiler Identifier. Gespeichert in localStorage → überlebt
-// In-App-Browser-Neustarts (Instagram, TikTok, WhatsApp etc.).
-// Funktioniert auch wenn sessionStorage zurückgesetzt wird.
-var STORAGE_KEY    = 'vs25_cid';  // Chat-ID (Session)
+// ── Persistente Besucher-ID & Chat-ID (Cookie + localStorage + sessionStorage) ──
+var STORAGE_KEY    = 'vs25_cid';  // Chat-ID (Session / Chat)
 var VID_KEY        = 'vs25_vid';  // Visitor-ID (persistent, UUID)
 
+function _getCookie(name) {
+  try {
+    var v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)');
+    return v ? decodeURIComponent(v[2]) : null;
+  } catch(_) { return null; }
+}
+
+function _setCookie(name, val, days) {
+  try {
+    days = days || 365;
+    var d = new Date();
+    d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+    document.cookie = name + '=' + encodeURIComponent(val) + ';expires=' + d.toUTCString() + ';path=/;SameSite=Lax';
+  } catch(_) {}
+}
+
 function _ssGet(){
-  try { return sessionStorage.getItem(STORAGE_KEY) || localStorage.getItem(STORAGE_KEY); } catch(_) { return null; }
+  try {
+    return _getCookie(STORAGE_KEY) || localStorage.getItem(STORAGE_KEY) || sessionStorage.getItem(STORAGE_KEY);
+  } catch(_) { return null; }
 }
 function _ssSet(v){
   if (!v) return;
-  try { sessionStorage.setItem(STORAGE_KEY, v); } catch(_) {}
+  try { _setCookie(STORAGE_KEY, v, 365); } catch(_) {}
   try { localStorage.setItem(STORAGE_KEY, v); } catch(_) {}
+  try { sessionStorage.setItem(STORAGE_KEY, v); } catch(_) {}
 }
 function _ssClear(){
-  try { sessionStorage.removeItem(STORAGE_KEY); } catch(_) {}
+  try { _setCookie(STORAGE_KEY, '', -1); } catch(_) {}
   try { localStorage.removeItem(STORAGE_KEY); } catch(_) {}
+  try { sessionStorage.removeItem(STORAGE_KEY); } catch(_) {}
 }
 
 // UUID v4 generator (kryptographisch ausreichend für Besucher-IDs)
@@ -89,34 +106,24 @@ function _uuid4(){
   }
 }
 
-// Stabile Besucher-ID lesen oder neu erstellen
+// Stabile Besucher-ID lesen oder neu erstellen (Cookie -> localStorage -> sessionStorage)
 function _getOrCreateVid(){
-  var vid=null;
-  // 1. localStorage (persistenteste Speicherung)
-  try{ vid=localStorage.getItem(VID_KEY); }catch(_){}
-  // 2. sessionStorage als Backup
-  if(!vid){ try{ vid=sessionStorage.getItem(VID_KEY); }catch(_){} }
-  // 3. Neu erstellen falls nichts gefunden
+  var vid = null;
+  try { vid = _getCookie(VID_KEY); } catch(_) {}
+  if(!vid){ try { vid = localStorage.getItem(VID_KEY); } catch(_) {} }
+  if(!vid){ try { vid = sessionStorage.getItem(VID_KEY); } catch(_) {} }
+
   if(!vid || vid.length < 10){
     vid = _uuid4();
-    try{ localStorage.setItem(VID_KEY, vid); }catch(_){}
-    try{ sessionStorage.setItem(VID_KEY, vid); }catch(_){}
-  } else {
-    // Synchronisieren: sicherstellen dass beide Stores die ID haben
-    try{ localStorage.setItem(VID_KEY, vid); }catch(_){}
-    try{ sessionStorage.setItem(VID_KEY, vid); }catch(_){}
   }
+  // Synchronisieren: sicherstellen dass alle Stores die ID enthalten
+  try { _setCookie(VID_KEY, vid, 365); } catch(_) {}
+  try { localStorage.setItem(VID_KEY, vid); } catch(_) {}
+  try { sessionStorage.setItem(VID_KEY, vid); } catch(_) {}
   return vid;
 }
 
 var _visitorId = _getOrCreateVid();
-
-// Legacy chatId Migration (localStorage → sessionStorage)
-try {
-  var _legacy = localStorage.getItem(STORAGE_KEY);
-  if (_legacy && !_ssGet()) _ssSet(_legacy);
-  if (_legacy) localStorage.removeItem(STORAGE_KEY);
-} catch(_) {}
 
 function smartTitle(){
   var path=location.pathname;
@@ -733,40 +740,29 @@ function showTyp(show){
 function scrl(){var e=document.getElementById('vs25-msgs');if(e)e.scrollTop=e.scrollHeight;}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');}
 
-// ── Erweiterter Fingerprint ───────────────────────────────────────────────────
-// Kombiniert mehrere Signale damit auch identische In-App-Browser
-// (Instagram, TikTok) auseinandergehalten werden können.
-// visitor_id (UUID) ist jedoch der primäre Identifier — fp() nur als Ergänzung.
+// ── Stabile Fingerprint-Berechnung (Deterministisch & Orientierungsunabhängig) ──
 function fp(){
+  var w = screen.width || 0;
+  var h = screen.height || 0;
+  var normScreen = Math.min(w, h) + 'x' + Math.max(w, h);
   var parts=[
     navigator.userAgent||'',
     navigator.language||'',
-    (screen.width||0)+'x'+(screen.height||0),
+    normScreen,
     (screen.colorDepth||0)+'bit',
-    Intl.DateTimeFormat().resolvedOptions().timeZone||'',
+    (function(){ try { return Intl.DateTimeFormat().resolvedOptions().timeZone||''; } catch(_) { return ''; } })(),
     (navigator.hardwareConcurrency||0)+'cpu',
     (navigator.deviceMemory||0)+'gb',
     navigator.platform||'',
     (navigator.maxTouchPoints||0)+'tp'
   ];
-  // Canvas-Fingerprint (rendert Text → Grafikkarte + Font-Unterschiede)
-  try{
-    var c=document.createElement('canvas'),g=c.getContext('2d');
-    if(g){
-      g.textBaseline='top';g.font='14px Arial';
-      g.fillStyle='#f60';g.fillRect(125,1,62,20);
-      g.fillStyle='#069';g.fillText('PureSim',2,15);
-      g.fillStyle='rgba(102,204,0,0.7)';g.fillText('PureSim',4,17);
-      parts.push(c.toDataURL().slice(-32));
-    }
-  }catch(_){}
-  // WebGL renderer (GPU-Bezeichnung)
+  // WebGL hardware info (statische GPU-Bezeichnung, sofern verfügbar)
   try{
     var wc=document.createElement('canvas');
     var gl=wc.getContext('webgl')||wc.getContext('experimental-webgl');
     if(gl){
       var ext=gl.getExtension('WEBGL_debug_renderer_info');
-      if(ext) parts.push(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL).slice(0,20));
+      if(ext) parts.push(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL).slice(0,25));
     }
   }catch(_){}
   return btoa(unescape(encodeURIComponent(parts.join('|')))).substring(0,48);

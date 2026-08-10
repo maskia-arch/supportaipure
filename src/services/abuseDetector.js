@@ -81,7 +81,7 @@ const abuseDetector = {
         const lastNotice = _muteNotice.get('ban_' + chatId) || 0;
         if (now - lastNotice > MUTE_NOTICE_THROTTLE) {
           _muteNotice.set('ban_' + chatId, now);
-          return { action: 'banned', message: this._banMsg(), isLegit: false };
+          return { action: 'banned', message: this._banMsg(meta.platform), isLegit: false };
         }
         return { action: 'muted_silent', message: null, isLegit: false };
       }
@@ -333,9 +333,13 @@ const abuseDetector = {
          + '🚫 This request is illegal and has been reported. Access has been permanently blocked.';
   },
 
-  _banMsg() {
-    return '🚫 Dieser Zugang wurde gesperrt. Bei Fragen wende dich an @autoacts.\n\n'
-         + '🚫 This access has been blocked. For questions contact @autoacts.';
+  _banMsg(platform = 'web_widget') {
+    if (platform === 'telegram') {
+      return '🚫 Dieser Zugang wurde gesperrt. Bei Fragen wende dich an @autoacts.\n\n'
+           + '🚫 This access has been blocked. For questions contact @autoacts.';
+    }
+    return '🚫 Dieser Zugang wurde gesperrt. Bei Fragen erstelle bitte ein Ticket über das Shop Ticket-System.\n\n'
+         + '🚫 This access has been blocked. For questions please open a ticket via the Shop Ticket System.';
   },
 
   // ── Flag protokollieren (echtes user_flags-Schema: flag_type, details) ─

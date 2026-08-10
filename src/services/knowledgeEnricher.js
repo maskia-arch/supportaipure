@@ -79,6 +79,8 @@ const knowledgeEnricher = {
       _catCache = null; _catCacheTime = 0;
     } catch (e) {
       logger.warn(`[Enricher] ensureEsimCategories: ${e.message}`);
+    } finally {
+      await this.ensureDefaultKnowledgeEntries().catch(() => {});
     }
   },
 
@@ -247,6 +249,37 @@ Nur JSON zurückgeben, kein Markdown, kein Array.`;
     }
 
     return saved;
+  },
+
+  // ── Standarteinträge sicherstellen (z.B. Anonymität) ───────────────────────
+  async ensureDefaultKnowledgeEntries() {
+    const anonymityTitle = "Anonymität & Datenschutz (PureSim eSIMs sind 100% anonym)";
+    const anonymityContent = "Sind die eSIMs von PureSim anonym? Ja, unsere eSIM-Tarife und eSIMs sind vollständig anonym. Wir erheben keinerlei persönliche Daten vom Nutzer. Alles was für die technische Bereitstellung nicht zwingend gebraucht wird, wird gar nicht erst gespeichert oder zeitnah gelöscht. Es gibt keine Ausweispflicht, kein KYC und keine Speicherung von personenbezogenen Daten.";
+
+    try {
+      const { data: existing } = await supabase
+        .from('knowledge_base')
+        .select('id')
+        .ilike('content', '%vollständig anonym%')
+        .maybeSingle();
+
+      if (!existing) {
+        const embeddingService = require('./embeddingService');
+        const embRes = await embeddingService.createEmbedding(anonymityContent);
+        const ins = {
+          title: anonymityTitle,
+          content: anonymityContent,
+          category_id: 4,
+          source_type: 'system',
+          is_active: 1,
+          embedding: embRes?.embedding || null
+        };
+        await supabase.from('knowledge_base').insert([ins]);
+        logger.info('[Enricher] Anonymitäts-KB-Eintrag erfolgreich angelegt ✅');
+      }
+    } catch (e) {
+      logger.warn(`[Enricher] ensureDefaultKnowledgeEntries Error: ${e.message}`);
+    }
   }
 };
 

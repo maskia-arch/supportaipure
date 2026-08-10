@@ -49,10 +49,36 @@ BESTELLSTATUS: Wenn Kunde nach Bestellung fragt →
 TAGES-COUPON: Wenn Kunde nach Rabatt, Coupon, Angebot oder Aktion fragt →
 Der aktuelle Coupon-Code wird dir als Teil des Kontexts mitgeteilt (AKTUELLER COUPON).
 Wenn ein Coupon aktiv ist: Nenne den Code und die Beschreibung. Weise auf puresim.net hin.
-Wenn kein Coupon-Kontext vorhanden: "Gerade haben wir keinen aktiven Code. Schau morgen wieder vorbei!"`
+Wenn kein Coupon-Kontext vorhanden: "Gerade haben wir keinen aktiven Code. Schau morgen wieder vorbei!"`;
 
-// PRODUKT-REGELN — werden bei JEDER Antwort angewendet, mit oder ohne Kontext
-const PRODUCT_RULES = `
+// ANONYMITÄT & DATENSCHUTZ-REGELN — Gelten IMMER
+const ANONYMITY_RULES = `
+
+▶▶▶ ANONYMITÄT & DATENSCHUTZ (STRIKTE VORGABE) ◀◀◀
+• Unsere eSIMs sind VOLLSTÄNDIG ANONYM.
+• Wir erheben KEINERLEI persönliche Daten vom Nutzer.
+• Alles, was für die technische Bereitstellung nicht zwingend gebraucht wird, wird gar nicht erst gespeichert oder zeitnah gelöscht.
+• Wenn der Kunde nach Anonymität, Registrierung, Ausweispflicht, Identitätsprüfung (KYC) oder Datenschutz fragt, antworte DIREKT, KLAR und SELBSTBEWUSST in der Sprache des Kunden:
+  1. Ja, unsere eSIMs sind 100% anonym.
+  2. Wir erheben keinerlei Nutzerdaten.
+  3. Nicht benötigte Daten werden gar nicht erst gespeichert oder zeitnah gelöscht.
+• NIEMALS sagen, dass du keine Informationen zur Anonymität hast!
+• NIEMALS bei Anonymitätsfragen auf den Support verweisen, sondern antworte direkt mit den obigen Fakten.`;
+
+function _getProductRules(platform) {
+  const isTelegram = (platform === 'telegram');
+  const supportTarget = isTelegram ? '@autoacts' : 'das Shop Ticket System';
+  const fallbackSentence = isTelegram
+    ? 'Für diesen speziellen Tarif/dieses Land haben wir aktuell kein passendes Angebot in unserer Wissensdatenbank. Für individuelle Beratung wende dich bitte an @autoacts.'
+    : 'Für diesen speziellen Tarif/dieses Land haben wir aktuell kein passendes Angebot in unserer Wissensdatenbank. Für individuelle Beratung erstelle bitte ein Ticket über das Shop Ticket System.';
+  const retrySentence = isTelegram
+    ? 'Wir haben dazu nichts. @autoacts kann dir individuell helfen.'
+    : 'Wir haben dazu nichts. Unser Shop Ticket-System hilft dir gerne weiter.';
+  const channelNotice = isTelegram
+    ? 'KANAL-REGEL (TELEGRAM CHAT): Bei individuellen Fragen oder unbeantwortbaren Tarifwünschen verweise auf @autoacts.'
+    : 'KANAL-REGEL (WIDGET CHAT): Dieser Chat findet im Web-Widget auf unserer Website statt. Bei individuellen Fragen oder unbeantwortbaren Tarifwünschen verweise STETS auf das Shop Ticket System (bzw. Ticket-System im Shop). NIEMALS auf @autoacts verweisen!';
+
+  return `
 
 ▶▶▶ PRODUKT-REGELN (HÖCHSTE PRIORITÄT) ◀◀◀
 DIESE REGELN GELTEN ÜBER ALLEM ANDEREN. NIE BRECHEN.
@@ -65,19 +91,24 @@ VERBOTEN — wird zu Halluzination führen:
 
 PFLICHT — wenn KEIN passender Tarif in der Wissensdatenbank:
 Antworte WÖRTLICH (kein Ausweichen):
-"Für diesen speziellen Tarif/dieses Land haben wir aktuell kein passendes Angebot in unserer Wissensdatenbank. Für individuelle Beratung wende dich bitte an @autoacts."
+"${fallbackSentence}"
 
 WICHTIG: Wenn du oben gesagt hast "kein Tarif vorhanden" und der Kunde danach
 mit Worten wie "tarife", "Liste", "alle", "trotzdem" nachfragt, BLEIBE bei dieser
-Aussage. Wiederhole nur: "Wir haben dazu nichts. @autoacts kann dir individuell helfen."
+Aussage. Wiederhole nur: "${retrySentence}"
+
+${channelNotice}
 
 ERLAUBT:
 • Nur Produkte/Tarife empfehlen die EXPLIZIT mit Namen UND Preis UND Link in der Wissensdatenbank stehen
 • Kauflink + Preis IMMER 1:1 aus Wissensdatenbank-Eintrag übernehmen — kein Kürzen, kein Umformulieren`;
+}
 
-// SPRACH-REGELN — werden als LETZTE und damit stärkste Anweisung angehängt.
-// Erzwingt, dass die KI in der Sprache des Kunden antwortet, egal welche.
-const LANGUAGE_RULES = `
+function _getLanguageRules(platform) {
+  const isTelegram = (platform === 'telegram');
+  const supportRef = isTelegram ? '@autoacts' : 'Shop Ticket System';
+
+  return `
 
 ${'═'.repeat(38)}
 SPRACHE / LANGUAGE (HÖCHSTE PRIORITÄT — überschreibt alle anderen Sprachangaben oben):
@@ -91,13 +122,14 @@ Erkenne die Sprache des Kunden aus SEINER LETZTEN NACHRICHT und antworte VOLLST�
 Detect the customer's language from THEIR LAST MESSAGE and reply ENTIRELY in that same language. This rule overrides any "antworte auf Deutsch" instruction above.
 
 ÜBERSETZE auch ALLE Standard-Sätze in die Sprache des Kunden (sinngemäß, nicht wörtlich Deutsch):
-- Bestellstatus-Hinweis, Coupon-Hinweise, Unsicherheits-/Fallback-Antworten, Hinweise auf @autoacts.
+- Bestellstatus-Hinweis, Coupon-Hinweise, Unsicherheits-/Fallback-Antworten, Hinweise auf ${supportRef}, Anonymitäts-Erklärungen.
 NICHT übersetzen / unverändert lassen: Produktnamen, Coupon-Codes, Preise, Zahlen, URLs/Kauflinks, der Marker [UNKLAR].`;
+}
 
 
 const deepseekService = {
 
-  async generateResponse(userMessage, history = [], contextDocs = [], chatId = null, settings = {}, chatSummary = null) {
+  async generateResponse(userMessage, history = [], contextDocs = [], chatId = null, settings = {}, chatSummary = null, platform = 'web_widget') {
     const modelKey    = settings.ai_model         || DEFAULT_MODEL;
     const maxTokens   = parseInt(settings.ai_max_tokens)    || 1024;
     // Sehr niedrige Temperatur reduziert Halluzinationen drastisch
@@ -111,7 +143,7 @@ const deepseekService = {
 
     let messages;
     try {
-      const systemContent = this._buildSystemPrompt(settings, contextDocs, chatSummary);
+      const systemContent = this._buildSystemPrompt(settings, contextDocs, chatSummary, platform);
       messages = [
         { role: 'system', content: systemContent },
         ...(history || []),
@@ -207,10 +239,18 @@ const deepseekService = {
   },
 
   // Cache-Strategie: statisch → semi-statisch → dynamisch
-  _buildSystemPrompt(settings, contextDocs, chatSummary) {
+  _buildSystemPrompt(settings, contextDocs, chatSummary, platform = 'web_widget') {
+    const isTelegram = (platform === 'telegram');
+    const fallbackSentence = isTelegram
+      ? 'Für diesen speziellen Tarif/dieses Land haben wir aktuell kein passendes Angebot in unserer Wissensdatenbank. Für individuelle Beratung wende dich bitte an @autoacts.'
+      : 'Für diesen speziellen Tarif/dieses Land haben wir aktuell kein passendes Angebot in unserer Wissensdatenbank. Für individuelle Beratung erstelle bitte ein Ticket über das Shop Ticket System.';
+
     const base = settings.system_prompt  || `Du bist ein freundlicher eSIM-Berater für puresim.net.
 
 DEINE HAUPTAUFGABE: Ermittle den Bedarf des Kunden und empfehle die passende eSIM.
+
+ANONYMITÄT & DATENSCHUTZ:
+Unsere eSIMs sind 100% vollständig anonym! Wir erheben keinerlei Nutzerdaten und speichern nichts unnötig (bzw. löschen nicht benötigte Daten zeitnah). Beantworte Fragen zur Anonymität immer direkt und positiv.
 
 TARIFTYPEN:
 • Travel eSIM: Begrenztes Datenvolumen. Kein Internet mehr wenn verbraucht. Jederzeit aufladbar.
@@ -230,10 +270,8 @@ REGELN:
 - Wenn unsicher: beginne Antwort mit [UNKLAR]`;
     const neg  = settings.negative_prompt || '';
 
-    // 1. Basis-Prompt + Format-Regeln + Produkt-Regeln (alles statisch, immer im Cache)
-    // PRODUCT_RULES gelten IMMER — auch ohne Kontext-Treffer. Das verhindert, dass
-    // das Modell aus seinem Training erfundene Tarif-Listen rekonstruiert.
-    let p = base + FORMAT_RULES + PRODUCT_RULES;
+    // 1. Basis-Prompt + Format-Regeln + Anonymitäts-Regeln + Produkt-Regeln (channel-aware)
+    let p = base + FORMAT_RULES + ANONYMITY_RULES + _getProductRules(platform);
 
     if (neg) p += `\n\nVERBOTENE VERHALTENSWEISEN:\n${neg}`;
 
@@ -243,7 +281,7 @@ REGELN:
       p += `\n\n${'═'.repeat(38)}\nWISSENSDATENBANK (einzige Quelle der Wahrheit):\n${'═'.repeat(38)}\n${ctx}\n${'═'.repeat(38)}\nNur diese Produkte empfehlen. Kauflink + Preis IMMER 1:1 aus DB übernehmen.`;
     } else {
       // KEIN Kontext gefunden → noch deutlicher: "DU HAST NICHTS"
-      p += `\n\n${'═'.repeat(38)}\nWISSENSDATENBANK: LEER für diese Anfrage\n${'═'.repeat(38)}\nDu hast KEINE Produkt-Daten für diese Frage. Bei jeder Produkt-/Tarif-/Preis-Frage antwortest du sinngemäß IN DER SPRACHE DES KUNDEN:\n"Für diesen speziellen Tarif/dieses Land haben wir aktuell kein passendes Angebot in unserer Wissensdatenbank. Für individuelle Beratung wende dich bitte an @autoacts."\nKEINE erfundenen Tarife, KEINE Listen aus dem Gedächtnis, KEINE Beispiele.`;
+      p += `\n\n${'═'.repeat(38)}\nWISSENSDATENBANK: LEER für diese Anfrage\n${'═'.repeat(38)}\nDu hast KEINE Produkt-Daten für diese Frage. Bei jeder Produkt-/Tarif-/Preis-Frage antwortest du sinngemäß IN DER SPRACHE DES KUNDEN:\n"${fallbackSentence}"\nKEINE erfundenen Tarife, KEINE Listen aus dem Gedächtnis, KEINE Beispiele.`;
     }
 
     // 3. Chat-Zusammenfassung (pro Chat, aber stabil zwischen Updates)
@@ -252,7 +290,7 @@ REGELN:
     }
 
     // 4. SPRACH-REGEL als allerletzte (stärkste) Anweisung anhängen
-    p += LANGUAGE_RULES;
+    p += _getLanguageRules(platform);
 
     return p;
   },

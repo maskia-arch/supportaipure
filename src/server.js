@@ -61,6 +61,12 @@ const server = app.listen(port, () => {
     setAutoCommands();
     startKeepAlive();
 
+    // Default-Wissen & Kategorien (z.B. Anonymität)
+    try {
+      const knowledgeEnricher = require('./services/knowledgeEnricher');
+      knowledgeEnricher.ensureDefaultKnowledgeEntries();
+    } catch(e) { logger.warn(e.message); }
+
     // Coupon-Scheduler (taegliche Coupons)
     try {
       const couponService = require('./services/couponService');

@@ -182,7 +182,8 @@ const messageProcessor = {
     // metadata (ip, fingerprint) wird für vollständige Sperre übergeben.
     const abuse = await abuseDetector.check(chatId, text, {
       ip: metadata?.ip || null,
-      fingerprint: metadata?.fingerprint || null
+      fingerprint: metadata?.fingerprint || null,
+      platform
     });
     if (abuse.action !== 'allow') {
       // User-Nachricht protokollieren (damit Dashboard den Verlauf sieht)
@@ -330,7 +331,7 @@ const messageProcessor = {
 
     let aiResult;
     try {
-      aiResult = await deepseekService.generateResponse(text, recentHistoryForAI, context, chat.id, settings, fullSummary);
+      aiResult = await deepseekService.generateResponse(text, recentHistoryForAI, context, chat.id, settings, fullSummary, platform);
     } catch (aiErr) {
       // Sollte durch den neuen deepseekService nicht mehr passieren,
       // aber als letzter Fallback für unvorhergesehene Fehler:

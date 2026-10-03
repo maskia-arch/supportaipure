@@ -264,6 +264,10 @@ var CSS = [
 '#vs25-pnl{position:fixed;z-index:99999;display:none;flex-direction:column;top:0;left:0;width:100%;height:100%;height:100svh;max-height:100svh;border-radius:0;overflow:hidden;background:var(--pnl-bg);box-shadow:var(--pnl-shadow);transform:translateY(105%);transition:transform .38s cubic-bezier(.16,1,.3,1)}',
 '@supports(height:100dvh) and (not (height:100svh)){#vs25-pnl{height:100dvh;max-height:100dvh}}',
 '#vs25-pnl.on{display:flex;transform:translateY(0)}',
+'@media(max-width:539px){',
+'  #vs25-pnl.vs25-checkout{top:auto;bottom:0;left:0;width:100%;height:min(380px,46vh);max-height:46vh;border-radius:20px 20px 0 0;box-shadow:0 -10px 40px rgba(0,0,0,.25);transform:translateY(110%)}',
+'  #vs25-pnl.vs25-checkout.on{transform:translateY(0)}',
+'}',
 '@media(min-width:540px){',
 '  #vs25-pnl{top:auto;bottom:104px;right:24px;left:auto;width:400px;height:min(660px,calc(100svh - 120px));border-radius:24px;border:var(--pnl-border);transform:translateY(120%) scale(.95);transition:transform .35s cubic-bezier(.16,1,.3,1),opacity .25s}',
 '  #vs25-pnl.on{transform:translateY(0) scale(1);opacity:1}',
@@ -430,7 +434,13 @@ function build(){
 
   document.body.appendChild(w);
 
-  document.getElementById('vs25-bbl').onclick=toggleChat;
+  if(location.pathname.indexOf('/checkout/crypto') !== -1){
+    var pnlEl = document.getElementById('vs25-pnl');
+    if(pnlEl) pnlEl.classList.add('vs25-checkout');
+  }
+
+  var bblEl = w.querySelector('#vs25-bbl') || document.getElementById('vs25-bbl');
+  if(bblEl) bblEl.onclick = toggleChat;
   document.getElementById('vs25-back').onclick=closeChat;
   document.getElementById('vs25-snd').onclick=sendMsg;
   document.getElementById('vs25-ki-toggle').onchange=toggleKI;
@@ -685,14 +695,31 @@ function startStatusPoll(){
     if(!chatId) return;
     pollNewMessages();
     _safeFetch(API+'/api/widget/status',{headers:{'X-Chat-ID':chatId}})
-    .then(function(r){return r.json();}).then(function(d){setStatusUI(d.status||'online');}).catch(function(){});
+    .then(function(r){
+      if(!r || !r.ok){
+        // Bei 404 oder Fehlern sofort Intervall stoppen und nicht wiederholen
+        if(_statusInt){ clearInterval(_statusInt); _statusInt=null; }
+        return null;
+      }
+      return r.json();
+    })
+    .then(function(d){if(d&&d.status)setStatusUI(d.status);})
+    .catch(function(){
+      if(_statusInt){ clearInterval(_statusInt); _statusInt=null; }
+    });
   }, 15000);
 }
 
 function toggleChat(){if(isOpen) closeChat(); else openChat();}
 function openChat(){
   if(isOpen) return;isOpen=true;hideInv();_proDone=true;clearTimeout(_proTimer);
-  document.getElementById('vs25-pnl').classList.add('on');
+  var pnl=document.getElementById('vs25-pnl');
+  if(pnl){
+    if(location.pathname.indexOf('/checkout/crypto') !== -1){
+      pnl.classList.add('vs25-checkout');
+    }
+    pnl.classList.add('on');
+  }
   var bbl=document.getElementById('vs25-bbl');
   if(bbl){bbl.classList.add('vs25-open');bbl.setAttribute('aria-label','Chat schließen');}
   setTimeout(function(){var i=document.getElementById('vs25-inp');if(i)i.focus();scrl();},80);
@@ -700,10 +727,19 @@ function openChat(){
 }
 function closeChat(){
   isOpen=false;
-  document.getElementById('vs25-pnl').classList.remove('on');
+  var pnl=document.getElementById('vs25-pnl');
+  if(pnl) pnl.classList.remove('on');
   var bbl=document.getElementById('vs25-bbl');
   if(bbl){bbl.classList.remove('vs25-open');bbl.setAttribute('aria-label','Chat öffnen');}
 }
+
+// Global API für puresim Storefront
+window.vs25 = {
+  open: openChat,
+  close: closeChat,
+  toggle: toggleChat,
+  isOpen: function(){ return isOpen; }
+};
 function showInv(){if(_proDone||isOpen) return;document.getElementById('vs25-inv').classList.add('on');_proDone=true;}
 function hideInv(){document.getElementById('vs25-inv').classList.remove('on');}
 

@@ -29,52 +29,59 @@ router.get('/health', (req, res) => {
 });
 
 router.post('/beacon', async (req, res) => {
-  res.sendStatus(200);
-  setImmediate(async () => {
-    try {
-      const ip = visitorService._getClientIp(req);
-      const visitorId = (req.body.visitorId || '').trim().substring(0, 64) || null;
-      const passedCid = req.headers['x-chat-id'] || req.body.chatId || null;
-      const { chatId, isNew, visitorNumber } = await visitorService.getOrCreateVisitor(
-        ip, req.headers['user-agent'], req.body.fingerprint, visitorId, passedCid
-      );
-      const banCheck = await visitorService.isBanned(ip, chatId);
-      if (banCheck.banned) return;
+  try {
+    const ip = visitorService._getClientIp(req);
+    const visitorId = (req.body.visitorId || '').trim().substring(0, 64) || null;
+    const passedCid = req.headers['x-chat-id'] || req.body.chatId || null;
+    const { chatId, isNew, visitorNumber } = await visitorService.getOrCreateVisitor(
+      ip, req.headers['user-agent'], req.body.fingerprint, visitorId, passedCid
+    );
 
-      const pageUrl   = req.body.pageUrl || '';
-      const pageTitle = req.body.pageTitle || getSmartTitle(pageUrl, req.body.pageTitle);
+    res.json({ ok: true, chatId, visitorNumber });
 
-      // Sicherstellen dass ein chats-Eintrag existiert (auch ohne Chat-Öffnung)
-      await _ensureChatRecord(chatId, ip, isNew);
+    setImmediate(async () => {
+      try {
+        const banCheck = await visitorService.isBanned(ip, chatId);
+        if (banCheck.banned) return;
 
-      // Kundenerkennung durchführen (falls E-Mail, User-ID, Ref oder ICCID im Body mitgesendet wurden)
-      if (req.body.email || req.body.userId || req.body.checkoutRef || req.body.iccid || req.body.customerName) {
-        await visitorService.identifyVisitor(chatId, {
-          email: req.body.email,
-          userId: req.body.userId,
-          checkoutRef: req.body.checkoutRef,
-          iccid: req.body.iccid,
-          name: req.body.customerName
+        const pageUrl   = req.body.pageUrl || '';
+        const pageTitle = req.body.pageTitle || getSmartTitle(pageUrl, req.body.pageTitle);
+
+        // Sicherstellen dass ein chats-Eintrag existiert (auch ohne Chat-Öffnung)
+        await _ensureChatRecord(chatId, ip, isNew);
+
+        // Kundenerkennung durchführen (falls E-Mail, User-ID, Ref oder ICCID im Body mitgesendet wurden)
+        if (req.body.email || req.body.userId || req.body.checkoutRef || req.body.iccid || req.body.customerName) {
+          await visitorService.identifyVisitor(chatId, {
+            email: req.body.email,
+            userId: req.body.userId,
+            checkoutRef: req.body.checkoutRef,
+            iccid: req.body.iccid,
+            name: req.body.customerName
+          }).catch(() => {});
+        }
+
+        // Visitor-Session aktualisieren (damit Live-Dashboard aktuell bleibt)
+        await _upsertSession(chatId, pageTitle, pageUrl, supabase, isNew);
+
+        // Activity-Log (mit voller URL)
+        await visitorService.logActivity(chatId, `Besucht: ${pageTitle}`, pageUrl, pageTitle).catch(() => {});
+
+        // Besucher-Meldung via notificationService (laut/sichtbar für neuen Besuch bzw. Wiederkehr)
+        const notifService = require('../services/notificationService');
+        await notifService.notifyNewVisitor({
+          chatId,
+          visitorNumber,
+          pageTitle,
+          pageUrl,
+          isNew
         }).catch(() => {});
-      }
 
-      // Visitor-Session aktualisieren (damit Live-Dashboard aktuell bleibt)
-      await _upsertSession(chatId, pageTitle, pageUrl, supabase, isNew);
-
-      // Activity-Log (mit voller URL)
-      await visitorService.logActivity(chatId, `Besucht: ${pageTitle}`, pageUrl, pageTitle).catch(() => {});
-
-      // Push-Notification (throttled, nur wenn VAPID konfiguriert)
-      const notifService = require('../services/notificationService');
-      await notifService.notifyVisitorActivity({
-        chatId,
-        visitorNumber,
-        pageTitle,
-        pageUrl
-      }).catch(() => {});
-
-    } catch (_) {}
-  });
+      } catch (_) {}
+    });
+  } catch (err) {
+    res.status(200).json({ ok: true });
+  }
 });
 
 function getSmartTitle(url, titleFromBrowser) {

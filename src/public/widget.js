@@ -265,6 +265,8 @@ var CSS = [
 '@supports(height:100dvh) and (not (height:100svh)){#vs25-pnl{height:100dvh;max-height:100dvh}}',
 '#vs25-pnl.on{display:flex;transform:translateY(0)}',
 '@media(max-width:539px){',
+'  #vs25-pnl{top:auto;bottom:0;left:0;width:100%;height:min(560px,68vh);max-height:68vh;border-radius:20px 20px 0 0;box-shadow:0 -10px 40px rgba(0,0,0,.25);transform:translateY(110%)}',
+'  #vs25-pnl.on{transform:translateY(0)}',
 '  #vs25-pnl.vs25-checkout{top:auto;bottom:0;left:0;width:100%;height:min(380px,46vh);max-height:46vh;border-radius:20px 20px 0 0;box-shadow:0 -10px 40px rgba(0,0,0,.25);transform:translateY(110%)}',
 '  #vs25-pnl.vs25-checkout.on{transform:translateY(0)}',
 '}',

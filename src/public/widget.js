@@ -126,18 +126,36 @@ function _getOrCreateVid(){
 var _visitorId = _getOrCreateVid();
 
 // ── Sprach-Erkennung (Seitensprache de / en) ──
-var _pageLang = (function(){
+function detectPageLang() {
   try {
     var match = document.cookie.match(/(?:^|;\s*)locale=([^;]+)/);
-    var cookieLocale = match ? decodeURIComponent(match[1]) : '';
-    var docLang = (document.documentElement && document.documentElement.lang) || '';
-    var l = cookieLocale || docLang;
-    if (!l && location.pathname.match(/^\/(en)(\/|$)/i)) l = 'en';
-    if (!l && location.pathname.match(/^\/(de)(\/|$)/i)) l = 'de';
-    if (!l && navigator.language) l = navigator.language;
-    return (l || 'de').toLowerCase().slice(0, 2) === 'en' ? 'en' : 'de';
+    var cookieLocale = match ? decodeURIComponent(match[1]).toLowerCase() : '';
+    if (cookieLocale.indexOf('en') === 0) return 'en';
+    if (cookieLocale.indexOf('de') === 0) return 'de';
+
+    var docLang = ((document.documentElement && document.documentElement.lang) || '').toLowerCase();
+    if (docLang.indexOf('en') === 0) return 'en';
+    if (docLang.indexOf('de') === 0) return 'de';
+
+    if (location.pathname.match(/^\/(en)(\/|$)/i)) return 'en';
+    if (location.pathname.match(/^\/(de)(\/|$)/i)) return 'de';
+
+    var t = (document.title || '').toLowerCase();
+    if (t.indexOf('warenkorb') !== -1 || t.indexOf('alle tarife') !== -1 || t.indexOf('günstige esims') !== -1) return 'de';
+    if (t.indexOf('cart') !== -1 || t.indexOf('plans') !== -1) return 'en';
+
+    var h1 = document.querySelector('h1');
+    if (h1 && h1.textContent) {
+      var h1t = h1.textContent.toLowerCase();
+      if (h1t.indexOf('tarife') !== -1 || h1t.indexOf('warenkorb') !== -1 || h1t.indexOf('kaufen') !== -1) return 'de';
+    }
+
+    if (navigator.language && navigator.language.toLowerCase().indexOf('en') === 0) return 'en';
+    return 'de';
   } catch(_) { return 'de'; }
-})();
+}
+
+var _pageLang = detectPageLang();
 
 var I18N = {
   de: {
@@ -171,12 +189,12 @@ var I18N = {
     ],
     titles: {
       home: 'Startseite',
-      cart: 'Warenkorb',
+      cart: 'Warenkorb | PureSim',
       checkout: 'Checkout',
       orderDone: 'Bestellung abgeschlossen ✅',
       tariff: 'Tarif: ',
       tariffSearch: 'Tarif-Suche: ',
-      tariffs: 'Tarifübersicht',
+      tariffs: 'Alle Tarife | PureSim',
       account: 'Mein Konto',
       activate: 'eSIM aktivieren',
       about: 'Über uns',
@@ -221,12 +239,12 @@ var I18N = {
     ],
     titles: {
       home: 'Home',
-      cart: 'Cart',
+      cart: 'Cart | PureSim',
       checkout: 'Checkout',
       orderDone: 'Order completed ✅',
       tariff: 'Plan: ',
       tariffSearch: 'Plan search: ',
-      tariffs: 'Plans',
+      tariffs: 'Plans | PureSim',
       account: 'My Account',
       activate: 'Activate eSIM',
       about: 'About Us',
@@ -244,14 +262,28 @@ var I18N = {
 
 var T = I18N[_pageLang] || I18N.de;
 
-try {
-  var bblPre = document.getElementById('vs25-bbl');
-  if (bblPre) bblPre.setAttribute('aria-label', T.bubbleOpen);
-} catch(_) {}
+function _syncBubbleAria() {
+  try {
+    var bbls = document.querySelectorAll('#vs25-bbl, button[id="vs25-bbl"]');
+    for (var i = 0; i < bbls.length; i++) {
+      bbls[i].setAttribute('aria-label', isOpen ? T.bubbleClose : T.bubbleOpen);
+    }
+  } catch(_) {}
+}
+_syncBubbleAria();
 
 function smartTitle(){
-  // Echtem Dokumenttitel der Seite Vorrang geben (liegt bereits in Seitensprache vor, z.B. "Plans | PureSim" oder "Cart | PureSim")
   var docT = (document.title || '').trim();
+
+  // Spezialfall deutsche Tarifliste: Wenn Next.js den Titel "Plans" bzw. "Plans | PureSim" gesetzt hat, auf Deutsch "Alle Tarife | PureSim" liefern
+  if (_pageLang === 'de' && /^\s*plans(\s*\|\s*puresim)?\s*$/i.test(docT)) {
+    var h1 = document.querySelector('h1');
+    var h1Txt = h1 ? h1.textContent.trim() : '';
+    if (h1Txt) return h1Txt + ' | PureSim';
+    return T.titles.tariffs;
+  }
+
+  // Echtem Dokumenttitel der Seite Vorrang geben (liegt bereits in Seitensprache vor, z.B. "Plans | PureSim" oder "Cart | PureSim")
   if (docT && docT.length > 0) {
     return docT.length > 70 ? docT.substring(0, 69) + '…' : docT;
   }

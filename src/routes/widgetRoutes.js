@@ -318,7 +318,7 @@ router.get('/faq', async (req, res) => {
   const lang = (req.query.lang || '').toLowerCase().startsWith('en') ? 'en' : 'de';
   const faqs = lang === 'en'
     ? ['Which eSIMs do you offer?', 'How do I activate?', 'Order status?', 'Unlimited vs Travel?', 'Validity period?']
-    : ['Welche eSIMs habt ihr?', 'Wie aktiviere ich?', 'Bestellstatus?', 'Unlimited oder Travel?', 'Gültigkeit?'];
+    : ['Welche eSIMs habt ihr?', 'Wie aktiviere ich?', 'Bestellstatus?', 'Tarif-Vergleich', 'Gültigkeit?'];
   res.json({ faqs });
 });
 

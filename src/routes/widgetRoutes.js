@@ -362,10 +362,15 @@ router.get('/config', async (req, res) => {
     const defaultEn = s?.welcome_message_en || 'Hello! 👋 I am your personal eSIM assistant. ✈️\n\nTo help me find the perfect plan for you, please let me know:\n1️⃣ Which country are you traveling to?\n2️⃣ How long will you be staying?\n3️⃣ About how much data do you need (e.g. for social media, navigation, or general browsing)?\n\nLet\'s find the right plan for you right away! 🚀';
 
     const welcome = lang === 'en' ? defaultEn : defaultDe;
+    const botNameDe = 'PureSim Berater';
+    const botNameEn = 'PureSim Support';
+    const botName = lang === 'en' ? botNameEn : botNameDe;
 
     res.json({
       enabled:          true,
-      botName:          'PureSim Support',
+      botName:          botName,
+      botNameDe:        botNameDe,
+      botNameEn:        botNameEn,
       welcomeMessage:   welcome,
       welcomeMessageDe: defaultDe,
       welcomeMessageEn: defaultEn,
@@ -375,7 +380,9 @@ router.get('/config', async (req, res) => {
     const isEn = (req.query.lang || '').toLowerCase().startsWith('en');
     res.json({
       enabled: true,
-      botName: 'PureSim Support',
+      botName: isEn ? 'PureSim Support' : 'PureSim Berater',
+      botNameDe: 'PureSim Berater',
+      botNameEn: 'PureSim Support',
       welcomeMessage: isEn
         ? 'Hello! 👋 I am your personal eSIM assistant. ✈️\n\nTo help me find the perfect plan for you, please let me know:\n1️⃣ Which country are you traveling to?\n2️⃣ How long will you be staying?\n3️⃣ About how much data do you need (e.g. for social media, navigation, or general browsing)?\n\nLet\'s find the right plan for you right away! 🚀'
         : 'Hallo! 👋 Ich bin dein persönlicher eSIM-Berater. ✈️\n\nDamit ich den perfekten Tarif für dich finden kann, sag mir bitte kurz:\n1️⃣ In welches Land reist du?\n2️⃣ Wie lange bleibst du dort?\n3️⃣ Wie viel Datenvolumen brauchst du ungefähr (z. B. für Social Media, Navigation oder normales Surfen)?\n\nLass uns direkt den passenden Tarif finden! 🚀',

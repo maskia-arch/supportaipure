@@ -161,7 +161,7 @@ var I18N = {
   de: {
     bubbleOpen: 'Chat öffnen',
     bubbleClose: 'Chat schließen',
-    panelAria: 'PureSim Support Chat',
+    panelAria: 'PureSim Berater Chat',
     closeAria: 'Schließen',
     closeTitle: 'Schließen',
     themeAria: 'Hell/Dunkel wechseln',
@@ -172,7 +172,7 @@ var I18N = {
     statusOnline: 'KI Assistent · Online',
     statusManual: 'Mitarbeiter angefordert',
     statusOffline: 'KI Offline',
-    hdrName: 'PureSim Support',
+    hdrName: 'PureSim Berater',
     hdrSub: 'Antwortet meistens in unter 2 Std.',
     quickFaqLabel: '✨ Schnellfragen',
     inputPlaceholder: 'Nachricht eingeben…',
@@ -194,7 +194,7 @@ var I18N = {
       orderDone: 'Bestellung abgeschlossen ✅',
       tariff: 'Tarif: ',
       tariffSearch: 'Tarif-Suche: ',
-      tariffs: 'Alle Tarife | PureSim',
+      tariffs: 'Plans | PureSim',
       account: 'Mein Konto',
       activate: 'eSIM aktivieren',
       about: 'Über uns',
@@ -273,17 +273,8 @@ function _syncBubbleAria() {
 _syncBubbleAria();
 
 function smartTitle(){
-  var docT = (document.title || '').trim();
-
-  // Spezialfall deutsche Tarifliste: Wenn Next.js den Titel "Plans" bzw. "Plans | PureSim" gesetzt hat, auf Deutsch "Alle Tarife | PureSim" liefern
-  if (_pageLang === 'de' && /^\s*plans(\s*\|\s*puresim)?\s*$/i.test(docT)) {
-    var h1 = document.querySelector('h1');
-    var h1Txt = h1 ? h1.textContent.trim() : '';
-    if (h1Txt) return h1Txt + ' | PureSim';
-    return T.titles.tariffs;
-  }
-
   // Echtem Dokumenttitel der Seite Vorrang geben (liegt bereits in Seitensprache vor, z.B. "Plans | PureSim" oder "Cart | PureSim")
+  var docT = (document.title || '').trim();
   if (docT && docT.length > 0) {
     return docT.length > 70 ? docT.substring(0, 69) + '…' : docT;
   }
@@ -748,9 +739,10 @@ function startSession(){
     if(el && !el.children.length){
       addMsg('b', _configWelcome);
     }
-    if(d.botName){
+    if(d.botName || d.botNameDe || d.botNameEn){
+      var bName = _pageLang === 'en' ? (d.botNameEn || d.botName || T.hdrName) : (d.botNameDe || d.botName || T.hdrName);
       var nameEl = document.querySelector('.vs25-hdr-name');
-      if (nameEl) nameEl.textContent = d.botName;
+      if (nameEl && bName) nameEl.textContent = bName;
     }
   }).catch(function(){});
 

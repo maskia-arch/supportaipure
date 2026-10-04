@@ -128,7 +128,10 @@ var _visitorId = _getOrCreateVid();
 // ── Sprach-Erkennung (Seitensprache de / en) ──
 var _pageLang = (function(){
   try {
-    var l = (document.documentElement && document.documentElement.lang) || _getCookie('locale') || '';
+    var match = document.cookie.match(/(?:^|;\s*)locale=([^;]+)/);
+    var cookieLocale = match ? decodeURIComponent(match[1]) : '';
+    var docLang = (document.documentElement && document.documentElement.lang) || '';
+    var l = cookieLocale || docLang;
     if (!l && location.pathname.match(/^\/(en)(\/|$)/i)) l = 'en';
     if (!l && location.pathname.match(/^\/(de)(\/|$)/i)) l = 'de';
     if (!l && navigator.language) l = navigator.language;
@@ -201,7 +204,7 @@ var I18N = {
     statusOnline: 'AI Assistant · Online',
     statusManual: 'Agent requested',
     statusOffline: 'AI Offline',
-    hdrName: 'Questions? Chat with us.',
+    hdrName: 'PureSim Support',
     hdrSub: 'Typically replies under 2 hours.',
     quickFaqLabel: '✨ Quick Questions',
     inputPlaceholder: 'Compose your message…',
@@ -241,17 +244,16 @@ var I18N = {
 
 var T = I18N[_pageLang] || I18N.de;
 
+try {
+  var bblPre = document.getElementById('vs25-bbl');
+  if (bblPre) bblPre.setAttribute('aria-label', T.bubbleOpen);
+} catch(_) {}
+
 function smartTitle(){
-  // Echtem Dokumenttitel der Seite Vorrang geben (liegt bereits in Seitensprache vor, z.B. "Plans | PureSim")
+  // Echtem Dokumenttitel der Seite Vorrang geben (liegt bereits in Seitensprache vor, z.B. "Plans | PureSim" oder "Cart | PureSim")
   var docT = (document.title || '').trim();
   if (docT && docT.length > 0) {
-    var cleaned = docT
-      .split(/\s[–\-|]\s/)[0]
-      .replace(/\s*[\|–\-]\s*PureSim.*$/i, '')
-      .trim();
-    if (cleaned && cleaned.length > 1) {
-      return cleaned.length > 60 ? cleaned.substring(0, 60) + '…' : cleaned;
-    }
+    return docT.length > 70 ? docT.substring(0, 69) + '…' : docT;
   }
 
   var path = location.pathname;
@@ -684,10 +686,14 @@ function passiveTrack(){
 }
 passiveTrack._lastSent=null;
 
-var _configWelcome = null;
+var DEFAULT_WELCOME = {
+  de: 'Hallo! 👋 Ich bin dein persönlicher eSIM-Berater. ✈️\n\nDamit ich den perfekten Tarif für dich finden kann, sag mir bitte kurz:\n1️⃣ In welches Land reist du?\n2️⃣ Wie lange bleibst du dort?\n3️⃣ Wie viel Datenvolumen brauchst du ungefähr (z. B. für Social Media, Navigation oder normales Surfen)?\n\nLass uns direkt den passenden Tarif finden! 🚀',
+  en: 'Hello! 👋 I am your personal eSIM assistant. ✈️\n\nTo help me find the perfect plan for you, please let me know:\n1️⃣ Which country are you traveling to?\n2️⃣ How long will you be staying?\n3️⃣ About how much data do you need (e.g. for social media, navigation, or general browsing)?\n\nLet\'s find the right plan for you right away! 🚀'
+};
+var _configWelcome = DEFAULT_WELCOME[_pageLang] || DEFAULT_WELCOME.de;
 
 function startSession(){
-  _safeFetch(API+'/api/widget/config').then(function(r){return r.json();}).then(function(d){
+  _safeFetch(API+'/api/widget/config?lang='+encodeURIComponent(_pageLang)).then(function(r){return r.json();}).then(function(d){
     var ft=document.getElementById('vs25-ft-text');
     if(ft){
       if(d.poweredBy===null||d.poweredBy===''||d.poweredBy===false){
@@ -698,13 +704,17 @@ function startSession(){
         ft.textContent=d.poweredBy;
       }
     }
-    if(d.welcomeMessage){
+    if(_pageLang === 'en' && d.welcomeMessageEn){
+      _configWelcome = d.welcomeMessageEn;
+    } else if(_pageLang === 'de' && d.welcomeMessageDe){
+      _configWelcome = d.welcomeMessageDe;
+    } else if(d.welcomeMessage){
       _configWelcome = d.welcomeMessage;
-      // Falls Verlauf leer ist und noch keine Begrüßung angezeigt wurde, jetzt anzeigen
-      var el=document.getElementById('vs25-msgs');
-      if(el && !el.children.length){
-        addMsg('b', _configWelcome);
-      }
+    }
+    // Falls Verlauf leer ist und noch keine Begrüßung angezeigt wurde, jetzt anzeigen
+    var el=document.getElementById('vs25-msgs');
+    if(el && !el.children.length){
+      addMsg('b', _configWelcome);
     }
     if(d.botName){
       var nameEl = document.querySelector('.vs25-hdr-name');
@@ -941,16 +951,7 @@ function fp(){
     navigator.platform||'',
     (navigator.maxTouchPoints||0)+'tp'
   ];
-  // WebGL hardware info (statische GPU-Bezeichnung, sofern verfügbar)
-  try{
-    var wc=document.createElement('canvas');
-    var gl=wc.getContext('webgl')||wc.getContext('experimental-webgl');
-    if(gl){
-      var ext=gl.getExtension('WEBGL_debug_renderer_info');
-      if(ext) parts.push(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL).slice(0,25));
-    }
-  }catch(_){}
-  return btoa(unescape(encodeURIComponent(parts.join('|')))).substring(0,48);
+  return parts.join('|');
 }
 
 var _lastUrl=location.href;

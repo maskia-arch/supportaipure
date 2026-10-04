@@ -44,8 +44,43 @@ const visitorService = {
         if (byVid) existing = byVid;
       }
 
+      // ── 1b. Fallback: Suche in chats-Tabelle falls widget_visitors noch keinen Eintrag hatte
+      if (!existing && passedChatId && typeof passedChatId === 'string' && passedChatId.length >= 5) {
+        const { data: chatRow } = await supabase
+          .from('chats')
+          .select('*')
+          .eq('id', passedChatId)
+          .maybeSingle();
+        if (chatRow) {
+          const { data: vRow } = await supabase
+            .from('widget_visitors')
+            .select('*')
+            .eq('chat_id', chatRow.id)
+            .maybeSingle();
+          if (vRow) existing = vRow;
+        }
+      }
+
+      if (!existing && visitorId && visitorId.length >= 10) {
+        const { data: chatByVid } = await supabase
+          .from('chats')
+          .select('*')
+          .eq('visitor_id', visitorId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (chatByVid?.id) {
+          const { data: vRow2 } = await supabase
+            .from('widget_visitors')
+            .select('*')
+            .eq('chat_id', chatByVid.id)
+            .maybeSingle();
+          if (vRow2) existing = vRow2;
+        }
+      }
+
       // ── 2. Fingerprint + User-Agent — präzise Ergänzung wenn visitor_id fehlt
-      if (!existing && fingerprint) {
+      if (!existing && fingerprint && !visitorId) {
         let query = supabase
           .from('widget_visitors')
           .select('*')
@@ -58,10 +93,24 @@ const visitorService = {
           .limit(1)
           .maybeSingle();
         if (byFp) existing = byFp;
+
+        // Cross-Match: Klartext vs. 48-Zeichen Base64 Fingerprint (verhindert zweiten Besucher)
+        if (!existing) {
+          try {
+            const isB64_48 = fingerprint.length <= 48 && /^[A-Za-z0-9+/=]+$/.test(fingerprint);
+            if (!isB64_48) {
+              const b64Counterpart = Buffer.from(fingerprint, 'utf8').toString('base64').substring(0, 48);
+              let qB64 = supabase.from('widget_visitors').select('*').eq('fingerprint', b64Counterpart);
+              if (userAgent) qB64 = qB64.eq('user_agent', userAgent);
+              const { data: byB64 } = await qB64.order('last_seen', { ascending: false }).limit(1).maybeSingle();
+              if (byB64) existing = byB64;
+            }
+          } catch (_) {}
+        }
       }
 
-      // ── 3. IP-Hash + User-Agent (24h Zeitfenster) — verhindert NAT-False-Positives für verschiedene Geräte
-      if (!existing && ipHash && userAgent) {
+      // ── 3. IP-Hash + User-Agent (24h Zeitfenster) — nur wenn visitor_id fehlt
+      if (!existing && ipHash && userAgent && !visitorId) {
         const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
         const { data: byIpUa } = await supabase
           .from('widget_visitors')
@@ -75,7 +124,7 @@ const visitorService = {
         if (byIpUa) existing = byIpUa;
       }
 
-      // ── 4. Bestehenden Besucher aktualisieren — SELBE chatId zurückgeben
+      // ── 4. Bestehenden Besucher aktualisieren — SELBE chatId & visitorNumber zurückgeben
       if (existing) {
         const updates = {
           last_seen:   new Date(),
@@ -87,14 +136,20 @@ const visitorService = {
         // visitor_id nachträglich verknüpfen falls noch nicht vorhanden
         if (visitorId && !existing.visitor_id) {
           updates.visitor_id = visitorId;
+          existing.visitor_id = visitorId;
         }
-        await supabase.from('widget_visitors').update(updates).eq('chat_id', existing.chat_id);
+        // visitor_number nachträglich vergeben falls noch null
+        if (!existing.visitor_number) {
+          existing.visitor_number = await this._nextVisitorNumber();
+          updates.visitor_number = existing.visitor_number;
+        }
+        await supabase.from('widget_visitors').update(updates).eq('chat_id', existing.chat_id).catch(() => {});
 
         return {
           chatId:        existing.chat_id,
           visitor:       existing,
           isNew:         false,
-          visitorNumber: existing.visitor_number || null
+          visitorNumber: existing.visitor_number
         };
       }
 
@@ -102,11 +157,12 @@ const visitorService = {
       const visitorNumber = await this._nextVisitorNumber();
 
       // ── 6. Neuen Besucher anlegen
-      // chatId basiert auf visitor_id (wenn vorhanden) oder IP-Hash + Timestamp
       const idBase = visitorId
         ? visitorId.replace(/-/g, '').substring(0, 10)
         : ipHash.substring(0, 10);
-      const chatId = 'web_' + idBase + '_' + Date.now().toString(36).slice(-4);
+      const chatId = (passedChatId && typeof passedChatId === 'string' && passedChatId.length >= 5)
+        ? passedChatId
+        : ('web_' + idBase + '_' + Date.now().toString(36).slice(-4));
 
       const { data: created, error: insErr } = await supabase.from('widget_visitors').insert([{
         chat_id:        chatId,
@@ -122,20 +178,33 @@ const visitorService = {
 
       if (insErr) {
         logger.warn('[Visitor] Insert Fehler: ' + insErr.message);
+        // Falls Fehler wegen fehlender Spalten: Minimal-Insert versuchen damit Datensatz existiert!
+        if (insErr.message && (insErr.message.includes('visitor_id') || insErr.message.includes('visitor_number'))) {
+          await supabase.from('widget_visitors').insert([{
+            chat_id: chatId,
+            ip: ip || null,
+            ip_hash: ipHash || null,
+            user_agent: userAgent || null,
+            fingerprint: fingerprint || null,
+            first_seen: new Date(),
+            last_seen: new Date()
+          }]).catch(() => {});
+        }
+
         // Race-condition: nochmals per visitor_id / fingerprint suchen
         if (visitorId) {
           const { data: byVid2 } = await supabase
-            .from('widget_visitors').select('chat_id, visitor_number').eq('visitor_id', visitorId).maybeSingle();
-          if (byVid2?.chat_id) return { chatId: byVid2.chat_id, visitor: byVid2, isNew: false, visitorNumber: byVid2.visitor_number || null };
+            .from('widget_visitors').select('*').eq('visitor_id', visitorId).maybeSingle();
+          if (byVid2?.chat_id) return { chatId: byVid2.chat_id, visitor: byVid2, isNew: false, visitorNumber: byVid2.visitor_number || visitorNumber };
         }
         if (fingerprint) {
           const { data: byFp2 } = await supabase
-            .from('widget_visitors').select('chat_id, visitor_number').eq('fingerprint', fingerprint).maybeSingle();
-          if (byFp2?.chat_id) return { chatId: byFp2.chat_id, visitor: byFp2, isNew: false, visitorNumber: byFp2.visitor_number || null };
+            .from('widget_visitors').select('*').eq('fingerprint', fingerprint).maybeSingle();
+          if (byFp2?.chat_id) return { chatId: byFp2.chat_id, visitor: byFp2, isNew: false, visitorNumber: byFp2.visitor_number || visitorNumber };
         }
         const { data: byIp2 } = await supabase
-          .from('widget_visitors').select('chat_id, visitor_number').eq('ip_hash', ipHash).maybeSingle();
-        if (byIp2?.chat_id) return { chatId: byIp2.chat_id, visitor: byIp2, isNew: false, visitorNumber: byIp2.visitor_number || null };
+          .from('widget_visitors').select('*').eq('ip_hash', ipHash).maybeSingle();
+        if (byIp2?.chat_id) return { chatId: byIp2.chat_id, visitor: byIp2, isNew: false, visitorNumber: byIp2.visitor_number || visitorNumber };
         return { chatId, visitor: null, isNew: true, visitorNumber };
       }
 

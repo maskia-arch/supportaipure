@@ -53,6 +53,7 @@ const SQLITE_SCHEMA = `
     system_prompt TEXT NOT NULL DEFAULT 'Du bist ein hilfreicher Assistent fuer eSIM-Beratung.',
     negative_prompt TEXT DEFAULT '',
     welcome_message TEXT DEFAULT 'Hallo! 👋 Wie kann ich dir helfen?',
+    welcome_message_en TEXT DEFAULT 'Hello! 👋 I am your personal eSIM assistant. ✈️\n\nTo help me find the perfect plan for you, please let me know:\n1️⃣ Which country are you traveling to?\n2️⃣ How long will you be staying?\n3️⃣ About how much data do you need (e.g. for social media, navigation, or general browsing)?\n\nLet''s find the right plan for you right away! 🚀',
     manual_msg_template TEXT DEFAULT 'Ein Mitarbeiter wird gleich uebernehmen.',
     ai_model TEXT DEFAULT 'deepseek-v4-flash',
     ai_max_tokens INTEGER DEFAULT 1024,
@@ -443,6 +444,22 @@ async function initializeDatabase() {
 
       // Migrations-Runner
       logger.info('[DB Init] Postgres: Überprüfe Datenbank-Migrationen...');
+      try {
+        await pool.query(`
+          ALTER TABLE widget_visitors ADD COLUMN IF NOT EXISTS visitor_id TEXT;
+          CREATE INDEX IF NOT EXISTS idx_widget_visitors_visitor_id ON widget_visitors(visitor_id);
+          ALTER TABLE widget_visitors ADD COLUMN IF NOT EXISTS visitor_number INTEGER;
+          ALTER TABLE widget_visitors ADD COLUMN IF NOT EXISTS customer_email TEXT;
+          ALTER TABLE widget_visitors ADD COLUMN IF NOT EXISTS customer_name TEXT;
+          ALTER TABLE widget_visitors ADD COLUMN IF NOT EXISTS user_id TEXT;
+          ALTER TABLE chats ADD COLUMN IF NOT EXISTS customer_email TEXT;
+          ALTER TABLE chats ADD COLUMN IF NOT EXISTS customer_name TEXT;
+          ALTER TABLE settings ADD COLUMN IF NOT EXISTS welcome_message_en TEXT;
+        `);
+      } catch (colErr) {
+        logger.warn(`[DB Init] Postgres direct column check: ${colErr.message}`);
+      }
+
       await pool.query(`
         CREATE TABLE IF NOT EXISTS schema_migrations (
           version VARCHAR(255) PRIMARY KEY,
@@ -587,6 +604,9 @@ WICHTIGE VERHALTENSREGELN:
 - SUPPORT-ROUTING: Im Web-Widget-Chat verweise für individuellen Support STETS auf das Shop Ticket System (NIEMALS auf @autoacts!). Verweise auf @autoacts NUR im Telegram-Bot-Chat.
 - Verwende Markdown (z. B. **fett** für Tarifnamen) zur optischen Strukturierung.
 - Wenn der Kunde technische Fragen (z. B. zur eSIM-Aktivierung auf iPhone/Android oder zur Gerätekompatibilität) stellt, beantworte diese präzise basierend auf den Informationen der Wissensdatenbank.' WHERE id = 1`,
+        // Mehrsprachige Begrüßung (EN) in settings
+        `ALTER TABLE settings ADD COLUMN welcome_message_en TEXT`,
+        `UPDATE settings SET welcome_message_en = 'Hello! 👋 I am your personal eSIM assistant. ✈️\n\nTo help me find the perfect plan for you, please let me know:\n1️⃣ Which country are you traveling to?\n2️⃣ How long will you be staying?\n3️⃣ About how much data do you need (e.g. for social media, navigation, or general browsing)?\n\nLet''s find the right plan for you right away! 🚀' WHERE welcome_message_en IS NULL OR welcome_message_en = ''`,
       ];
 
       for (const sql of runtimeMigrations) {
@@ -797,6 +817,10 @@ class QueryBuilder {
 
   then(onfulfilled, onrejected) {
     return this.execute().then(onfulfilled, onrejected);
+  }
+
+  catch(onrejected) {
+    return this.execute().catch(onrejected);
   }
 
   async execute() {

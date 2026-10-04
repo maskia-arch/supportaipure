@@ -45,10 +45,10 @@ router.post('/beacon', async (req, res) => {
         if (banCheck.banned) return;
 
         const pageUrl   = req.body.pageUrl || '';
-        const pageTitle = req.body.pageTitle || getSmartTitle(pageUrl, req.body.pageTitle);
+        const pageTitle = getSmartTitle(pageUrl, req.body.pageTitle);
 
         // Sicherstellen dass ein chats-Eintrag existiert (auch ohne Chat-Öffnung)
-        await _ensureChatRecord(chatId, ip, isNew);
+        await _ensureChatRecord(chatId, ip, isNew, visitorId);
 
         // Kundenerkennung durchführen (falls E-Mail, User-ID, Ref oder ICCID im Body mitgesendet wurden)
         if (req.body.email || req.body.userId || req.body.checkoutRef || req.body.iccid || req.body.customerName) {
@@ -85,13 +85,9 @@ router.post('/beacon', async (req, res) => {
 });
 
 function getSmartTitle(url, titleFromBrowser) {
-  // Browser liefert den echten Seiten-Titel → Markenname abschneiden
-  if (titleFromBrowser) {
-    return titleFromBrowser
-      .split(/\s[–\-|]\s/)[0]   // "Startseite – PureSim" → "Startseite"
-      .replace(/\s*[\|–\-]\s*PureSim.*$/i, '')
-      .trim()
-      .substring(0, 60) || 'Seite';
+  // Wenn Browser den echten Seiten-Titel liefert, diesen direkt verwenden
+  if (titleFromBrowser && typeof titleFromBrowser === 'string' && titleFromBrowser.trim().length > 0) {
+    return titleFromBrowser.trim().substring(0, 80);
   }
   if (!url) return 'Seite';
   try {
@@ -179,7 +175,7 @@ router.post('/init', async (req, res) => {
     const smartTitle = req.body.pageTitle || 'Website';
 
     // Sicherstellen dass ein chats-Eintrag existiert (auch ohne Chat-Öffnung)
-    await _ensureChatRecord(chatId, ip, isNew);
+    await _ensureChatRecord(chatId, ip, isNew, visitorId);
 
     // Kundenerkennung durchführen (falls E-Mail, User-ID, Ref oder ICCID im Body mitgesendet wurden)
     if (req.body.email || req.body.userId || req.body.checkoutRef || req.body.iccid || req.body.customerName) {
@@ -195,11 +191,13 @@ router.post('/init', async (req, res) => {
     await visitorService.logActivity(chatId, `Besucht: ${smartTitle}`, pageUrl, smartTitle);
     await _upsertSession(chatId, smartTitle, pageUrl, supabase, isNew);
 
-    let welcome = 'Hallo! 👋 Wie kann ich dir helfen?';
-    const { data: s } = await supabase.from('settings').select('welcome_message').single();
-    if (s?.welcome_message) welcome = s.welcome_message;
+    const lang = (req.query.lang || req.body.lang || '').toLowerCase().startsWith('en') ? 'en' : 'de';
+    const { data: s } = await supabase.from('settings').select('welcome_message, welcome_message_en').single();
+    let welcome = lang === 'en'
+      ? (s?.welcome_message_en || 'Hello! 👋 I am your personal eSIM assistant. ✈️\n\nTo help me find the perfect plan for you, please let me know:\n1️⃣ Which country are you traveling to?\n2️⃣ How long will you be staying?\n3️⃣ About how much data do you need (e.g. for social media, navigation, or general browsing)?\n\nLet\'s find the right plan for you right away! 🚀')
+      : (s?.welcome_message || 'Hallo! 👋 Ich bin dein persönlicher eSIM-Berater. ✈️\n\nDamit ich den perfekten Tarif für dich finden kann, sag mir bitte kurz:\n1️⃣ In welches Land reist du?\n2️⃣ Wie lange bleibst du dort?\n3️⃣ Wie viel Datenvolumen brauchst du ungefähr (z. B. für Social Media, Navigation oder normales Surfen)?\n\nLass uns direkt den passenden Tarif finden! 🚀');
 
-    res.json({ chatId, isNew, welcome, banned: false });
+    res.json({ chatId, isNew, visitorNumber, welcome, banned: false });
 
     // Push-Notification fuer JEDEN /init - throttled in notificationService
     setImmediate(() => {
@@ -320,7 +318,7 @@ router.get('/faq', async (req, res) => {
   const lang = (req.query.lang || '').toLowerCase().startsWith('en') ? 'en' : 'de';
   const faqs = lang === 'en'
     ? ['Which eSIMs do you offer?', 'How do I activate?', 'Order status?', 'Unlimited vs Travel?', 'Validity period?']
-    : ['Welche eSIMs habt ihr?', 'Wie aktiviere ich?', 'Bestellstatus?', 'Unlimited vs Travel?', 'Gültigkeit?'];
+    : ['Welche eSIMs habt ihr?', 'Wie aktiviere ich?', 'Bestellstatus?', 'Unlimited oder Travel?', 'Gültigkeit?'];
   res.json({ faqs });
 });
 
@@ -354,36 +352,62 @@ router.post('/leave', async (req, res) => {
 
 router.get('/config', async (req, res) => {
   try {
-    const { data: s } = await supabase.from('settings').select('welcome_message, widget_powered_by').single();
+    const lang = (req.query.lang || '').toLowerCase().startsWith('en') ? 'en' : 'de';
+    const { data: s } = await supabase.from('settings').select('welcome_message, welcome_message_en, widget_powered_by').single();
     let powered = s?.widget_powered_by || 'Powered by PureSim AI';
     if (!powered || powered.includes('ValueShop')) powered = 'Powered by PureSim AI';
+
+    const defaultDe = s?.welcome_message || 'Hallo! 👋 Ich bin dein persönlicher eSIM-Berater. ✈️\n\nDamit ich den perfekten Tarif für dich finden kann, sag mir bitte kurz:\n1️⃣ In welches Land reist du?\n2️⃣ Wie lange bleibst du dort?\n3️⃣ Wie viel Datenvolumen brauchst du ungefähr (z. B. für Social Media, Navigation oder normales Surfen)?\n\nLass uns direkt den passenden Tarif finden! 🚀';
+
+    const defaultEn = s?.welcome_message_en || 'Hello! 👋 I am your personal eSIM assistant. ✈️\n\nTo help me find the perfect plan for you, please let me know:\n1️⃣ Which country are you traveling to?\n2️⃣ How long will you be staying?\n3️⃣ About how much data do you need (e.g. for social media, navigation, or general browsing)?\n\nLet\'s find the right plan for you right away! 🚀';
+
+    const welcome = lang === 'en' ? defaultEn : defaultDe;
+
     res.json({
-      enabled:        true,
-      botName:        'PureSim Support',
-      welcomeMessage: s?.welcome_message || 'Hallo!',
-      poweredBy:      powered
+      enabled:          true,
+      botName:          'PureSim Support',
+      welcomeMessage:   welcome,
+      welcomeMessageDe: defaultDe,
+      welcomeMessageEn: defaultEn,
+      poweredBy:        powered
     });
-  } catch { res.json({ enabled: true, botName: 'PureSim Support', poweredBy: 'Powered by PureSim AI' }); }
+  } catch {
+    const isEn = (req.query.lang || '').toLowerCase().startsWith('en');
+    res.json({
+      enabled: true,
+      botName: 'PureSim Support',
+      welcomeMessage: isEn
+        ? 'Hello! 👋 I am your personal eSIM assistant. ✈️\n\nTo help me find the perfect plan for you, please let me know:\n1️⃣ Which country are you traveling to?\n2️⃣ How long will you be staying?\n3️⃣ About how much data do you need (e.g. for social media, navigation, or general browsing)?\n\nLet\'s find the right plan for you right away! 🚀'
+        : 'Hallo! 👋 Ich bin dein persönlicher eSIM-Berater. ✈️\n\nDamit ich den perfekten Tarif für dich finden kann, sag mir bitte kurz:\n1️⃣ In welches Land reist du?\n2️⃣ Wie lange bleibst du dort?\n3️⃣ Wie viel Datenvolumen brauchst du ungefähr (z. B. für Social Media, Navigation oder normales Surfen)?\n\nLass uns direkt den passenden Tarif finden! 🚀',
+      poweredBy: 'Powered by PureSim AI'
+    });
+  }
 });
 
 // ── Chat-Record sicherstellen ────────────────────────────────────────────────
 // Erstellt einen Eintrag in der chats-Tabelle für JEDEN Besucher,
 // auch wenn der Chat nie geöffnet wurde — für den vollständigen Klickpfad
 // im Admin-Dashboard.
-async function _ensureChatRecord(chatId, ip, isNew) {
+async function _ensureChatRecord(chatId, ip, isNew, visitorId) {
   try {
     const { data: existing } = await supabase
       .from('chats')
-      .select('id')
+      .select('id, visitor_id')
       .eq('id', chatId)
       .maybeSingle();
-    if (existing) return; // bereits vorhanden
+    if (existing) {
+      if (visitorId && !existing.visitor_id) {
+        await supabase.from('chats').update({ visitor_id: visitorId }).eq('id', chatId).catch(() => {});
+      }
+      return;
+    }
 
     await supabase.from('chats').insert([{
       id:          chatId,
       platform:    'web_widget',
       status:      'ki',
       visitor_ip:  ip || null,
+      visitor_id:  visitorId || null,
       created_at:  new Date(),
       updated_at:  new Date()
     }]);

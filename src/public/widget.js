@@ -125,55 +125,181 @@ function _getOrCreateVid(){
 
 var _visitorId = _getOrCreateVid();
 
+// ── Sprach-Erkennung (Seitensprache de / en) ──
+var _pageLang = (function(){
+  try {
+    var l = (document.documentElement && document.documentElement.lang) || _getCookie('locale') || '';
+    if (!l && location.pathname.match(/^\/(en)(\/|$)/i)) l = 'en';
+    if (!l && location.pathname.match(/^\/(de)(\/|$)/i)) l = 'de';
+    if (!l && navigator.language) l = navigator.language;
+    return (l || 'de').toLowerCase().slice(0, 2) === 'en' ? 'en' : 'de';
+  } catch(_) { return 'de'; }
+})();
+
+var I18N = {
+  de: {
+    bubbleOpen: 'Chat öffnen',
+    bubbleClose: 'Chat schließen',
+    panelAria: 'PureSim Support Chat',
+    closeAria: 'Schließen',
+    closeTitle: 'Schließen',
+    themeAria: 'Hell/Dunkel wechseln',
+    themeTitle: 'Hell/Dunkel',
+    kiToggle: 'KI',
+    kiStaffAlert: '👤 Ein Mitarbeiter wurde benachrichtigt und meldet sich bald. Die KI ist pausiert.',
+    kiActiveAlert: '✅ KI-Support ist wieder aktiv.',
+    statusOnline: 'KI Assistent · Online',
+    statusManual: 'Mitarbeiter angefordert',
+    statusOffline: 'KI Offline',
+    hdrName: 'PureSim Support',
+    hdrSub: 'Antwortet meistens in unter 2 Std.',
+    quickFaqLabel: '✨ Schnellfragen',
+    inputPlaceholder: 'Nachricht eingeben…',
+    inputAria: 'Nachricht eingeben',
+    emojiTitle: 'Emoji einfügen',
+    sendAria: 'Nachricht senden',
+    poweredBy: 'Powered by PureSim AI',
+    sendError: 'Bitte erneut versuchen.',
+    invites: [
+      '💬 Fragen zur eSIM? Ich helfe sofort!',
+      '🤔 Noch unsicher? Kostenlose Beratung!',
+      '👋 Passende eSIM finden – frag mich!',
+      '🔍 Ich finde den richtigen Tarif für dich!'
+    ],
+    titles: {
+      home: 'Startseite',
+      cart: 'Warenkorb',
+      checkout: 'Checkout',
+      orderDone: 'Bestellung abgeschlossen ✅',
+      tariff: 'Tarif: ',
+      tariffSearch: 'Tarif-Suche: ',
+      tariffs: 'Tarifübersicht',
+      account: 'Mein Konto',
+      activate: 'eSIM aktivieren',
+      about: 'Über uns',
+      contact: 'Kontakt',
+      faq: 'FAQ & Hilfe',
+      blog: 'Blog',
+      category: 'Kategorie: ',
+      privacy: 'Datenschutz',
+      imprint: 'Impressum',
+      terms: 'AGB',
+      page: 'Seite'
+    }
+  },
+  en: {
+    bubbleOpen: 'Open support chat',
+    bubbleClose: 'Close support chat',
+    panelAria: 'PureSim Support Chat',
+    closeAria: 'Close',
+    closeTitle: 'Close',
+    themeAria: 'Toggle dark mode',
+    themeTitle: 'Light/Dark',
+    kiToggle: 'AI',
+    kiStaffAlert: '👤 An agent has been notified and will be with you shortly. AI is paused.',
+    kiActiveAlert: '✅ AI support is active again.',
+    statusOnline: 'AI Assistant · Online',
+    statusManual: 'Agent requested',
+    statusOffline: 'AI Offline',
+    hdrName: 'Questions? Chat with us.',
+    hdrSub: 'Typically replies under 2 hours.',
+    quickFaqLabel: '✨ Quick Questions',
+    inputPlaceholder: 'Compose your message…',
+    inputAria: 'Compose your message',
+    emojiTitle: 'Insert emoji',
+    sendAria: 'Send message',
+    poweredBy: 'Powered by PureSim AI',
+    sendError: 'Please try again.',
+    invites: [
+      '💬 Questions about eSIM? I am here to help!',
+      '🤔 Still unsure? Free instant advice!',
+      '👋 Find the right eSIM – ask me!',
+      '🔍 I will find the best plan for you!'
+    ],
+    titles: {
+      home: 'Home',
+      cart: 'Cart',
+      checkout: 'Checkout',
+      orderDone: 'Order completed ✅',
+      tariff: 'Plan: ',
+      tariffSearch: 'Plan search: ',
+      tariffs: 'Plans',
+      account: 'My Account',
+      activate: 'Activate eSIM',
+      about: 'About Us',
+      contact: 'Contact',
+      faq: 'FAQ & Help',
+      blog: 'Blog',
+      category: 'Category: ',
+      privacy: 'Privacy Policy',
+      imprint: 'Legal Notice',
+      terms: 'Terms of Service',
+      page: 'Page'
+    }
+  }
+};
+
+var T = I18N[_pageLang] || I18N.de;
+
 function smartTitle(){
-  var path=location.pathname;
-  var search=location.search;
+  // Echtem Dokumenttitel der Seite Vorrang geben (liegt bereits in Seitensprache vor, z.B. "Plans | PureSim")
+  var docT = (document.title || '').trim();
+  if (docT && docT.length > 0) {
+    var cleaned = docT
+      .split(/\s[–\-|]\s/)[0]
+      .replace(/\s*[\|–\-]\s*PureSim.*$/i, '')
+      .trim();
+    if (cleaned && cleaned.length > 1) {
+      return cleaned.length > 60 ? cleaned.substring(0, 60) + '…' : cleaned;
+    }
+  }
+
+  var path = location.pathname;
+  var search = location.search;
+  var titles = T.titles;
+
   // Startseite
-  if(path==='/'||path==='')return'Startseite';
+  if (path === '/' || path === '') return titles.home;
   // Warenkorb
-  if(/\/(cart|warenkorb)/i.test(path))return'Warenkorb';
+  if (/\/(cart|warenkorb)/i.test(path)) return titles.cart;
   // Checkout
-  if(/\/checkout/i.test(path)){
-    if(/order[-_]?received|thank/i.test(path))return'Bestellung abgeschlossen ✅';
-    return'Checkout';
+  if (/\/checkout/i.test(path)) {
+    if (/order[-_]?received|thank/i.test(path)) return titles.orderDone;
+    return titles.checkout;
   }
   // PureSim: Tarif-Detailseite /tariffs/slug
-  var td=path.match(/\/tariffs\/([^/?#]+)/i);
-  if(td)return'Tarif: '+td[1].replace(/-/g,' ');
+  var td = path.match(/\/tariffs\/([^/?#]+)/i);
+  if (td) return titles.tariff + td[1].replace(/-/g, ' ');
   // PureSim: Tarif-Suche /tariffs?q=Deutschland
-  if(/\/tariffs/i.test(path)){
-    var qp=new URLSearchParams(search).get('q')||new URLSearchParams(search).get('search')||'';
-    if(qp)return'Tarif-Suche: '+decodeURIComponent(qp).substring(0,40);
-    return'Tarifübersicht';
+  if (/\/tariffs/i.test(path)) {
+    var qp = new URLSearchParams(search).get('q') || new URLSearchParams(search).get('search') || '';
+    if (qp) return titles.tariffSearch + decodeURIComponent(qp).substring(0, 40);
+    return titles.tariffs;
   }
   // Account
-  if(/\/account|\/my-account|\/mein-konto/i.test(path))return'Mein Konto';
+  if (/\/account|\/my-account|\/mein-konto/i.test(path)) return titles.account;
   // eSIM aktivieren
-  if(/\/activat|\/aktivier|\/install/i.test(path))return'eSIM aktivieren';
+  if (/\/activat|\/aktivier|\/install/i.test(path)) return titles.activate;
   // Über uns / Kontakt / FAQ
-  if(/\/about|\/ueber-uns/i.test(path))return'Über uns';
-  if(/\/contact|\/kontakt/i.test(path))return'Kontakt';
-  if(/\/faq|\/hilfe|\/help/i.test(path))return'FAQ & Hilfe';
+  if (/\/about|\/ueber-uns/i.test(path)) return titles.about;
+  if (/\/contact|\/kontakt/i.test(path)) return titles.contact;
+  if (/\/faq|\/hilfe|\/help/i.test(path)) return titles.faq;
   // Blog
-  var bp=path.match(/\/blog\/([^/?#]+)/i);
-  if(bp)return'Blog: '+bp[1].replace(/-/g,' ').substring(0,40);
-  if(/\/blog/i.test(path))return'Blog';
+  var bp = path.match(/\/blog\/([^/?#]+)/i);
+  if (bp) return titles.blog + ': ' + bp[1].replace(/-/g, ' ').substring(0, 40);
+  if (/\/blog/i.test(path)) return titles.blog;
   // Produkt (WooCommerce)
-  var pm=path.match(/\/product\/([^/?#]+)/i);
-  if(pm)return pm[1].replace(/-/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();});
+  var pm = path.match(/\/product\/([^/?#]+)/i);
+  if (pm) return pm[1].replace(/-/g, ' ').replace(/\b\w/g, function(c){ return c.toUpperCase(); });
   // Kategorie
-  var cm=path.match(/\/categor[yi]\/([^/?#]+)/i);
-  if(cm)return'Kategorie: '+cm[1].replace(/-/g,' ');
+  var cm = path.match(/\/categor[yi]\/([^/?#]+)/i);
+  if (cm) return titles.category + cm[1].replace(/-/g, ' ');
   // Rechtliches
-  if(/\/datenschutz|\/privacy/i.test(path))return'Datenschutz';
-  if(/\/impressum|\/imprint/i.test(path))return'Impressum';
-  if(/\/agb|\/terms/i.test(path))return'AGB';
-  // Fallback: Browser-Titel, Markenname abschneiden
-  var t=(document.title||'')
-    .split(/\s[–\-|]\s/)[0]
-    .replace(/\s*[\|–\-]\s*PureSim.*$/i,'')
-    .trim();
-  return t.length>60?t.substring(0,60)+'…':(t||'Seite');
+  if (/\/datenschutz|\/privacy/i.test(path)) return titles.privacy;
+  if (/\/impressum|\/imprint/i.test(path)) return titles.imprint;
+  if (/\/agb|\/terms/i.test(path)) return titles.terms;
+
+  return titles.page;
 }
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
@@ -279,7 +405,7 @@ var CSS = [
 '@media(max-width:539px){.vs25-drag{display:flex}}',
 '.vs25-hdr{background:linear-gradient(135deg,var(--hdr-from),var(--hdr-via),var(--hdr-to));padding:calc(16px + env(safe-area-inset-top,0px)) 16px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;position:relative;box-shadow:0 4px 20px rgba(0,0,0,.15)}',
 '.vs25-hdr::after{content:"";position:absolute;bottom:0;left:0;right:0;height:1px;background:rgba(255,255,255,.1)}',
-'.vs25-back{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;width:40px;height:40px;flex-shrink:0;border-radius:50%;transition:all .18s;backdrop-filter:blur(8px)}',
+'.vs25-back{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;width:44px;height:44px;min-width:44px;min-height:44px;flex-shrink:0;border-radius:50%;transition:all .18s;backdrop-filter:blur(8px)}',
 '.vs25-back:hover{background:rgba(255,255,255,.24);transform:scale(1.05)}',
 '.vs25-back:active{transform:scale(.9)}',
 '.vs25-back svg{width:20px;height:20px;fill:white}',
@@ -295,7 +421,7 @@ var CSS = [
 '.vs25-hdr-sub-dot.online{background:#4ade80}',
 '.vs25-hdr-sub-dot.manual{background:#fbbf24}',
 '.vs25-hdr-sub-dot.offline{background:#f87171}',
-'.vs25-theme-btn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;width:38px;height:38px;flex-shrink:0;border-radius:50%;transition:all .18s;backdrop-filter:blur(8px)}',
+'.vs25-theme-btn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;width:44px;height:44px;min-width:44px;min-height:44px;flex-shrink:0;border-radius:50%;transition:all .18s;backdrop-filter:blur(8px)}',
 '.vs25-theme-btn:hover{background:rgba(255,255,255,.24);transform:scale(1.05)}',
 '.vs25-theme-btn:active{transform:scale(.9)}',
 '.vs25-theme-btn svg{width:18px;height:18px;fill:white;display:block}',
@@ -336,7 +462,7 @@ var CSS = [
 '.vs25-fq{padding:10px 14px 8px;background:var(--bar-bg);flex-shrink:0;border-top:1px solid var(--divider)}',
 '.vs25-fq-label{font-size:.68rem;color:var(--chip-c);font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;display:flex;align-items:center;gap:4px}',
 '.vs25-fqg{display:flex;flex-wrap:wrap;gap:6px}',
-'.vs25-chip{display:inline-flex;align-items:center;gap:5px;background:var(--chip-bg);color:var(--chip-c);border:1.5px solid var(--chip-border);font-size:.8rem;font-weight:600;padding:7px 13px;border-radius:9999px;cursor:pointer;line-height:1.2;transition:all .2s cubic-bezier(.34,1.56,.64,1);box-shadow:0 1px 4px rgba(0,0,0,.03);touch-action:manipulation}',
+'.vs25-chip{display:inline-flex;align-items:center;justify-content:center;min-height:44px;gap:5px;background:var(--chip-bg);color:var(--chip-c);border:1.5px solid var(--chip-border);font-size:.8rem;font-weight:600;padding:10px 14px;border-radius:9999px;cursor:pointer;line-height:1.2;transition:all .2s cubic-bezier(.34,1.56,.64,1);box-shadow:0 1px 4px rgba(0,0,0,.03);touch-action:manipulation;box-sizing:border-box}',
 '.vs25-chip:hover{background:var(--chip-hbg);color:var(--chip-hc);border-color:var(--chip-hbg);transform:translateY(-2px);box-shadow:0 6px 18px rgba(37,99,235,.3)}',
 '.vs25-chip:active{transform:scale(.95)}',
 '.vs25-bot-avatar{width:32px;height:32px;border-radius:50%;background:#ffffff;border:1px solid #e2e8f0;object-fit:contain;padding:2px;flex-shrink:0;margin-top:2px;box-shadow:0 2px 6px rgba(0,0,0,.06)}',
@@ -348,18 +474,18 @@ var CSS = [
 '.vs25-input-tools{display:flex;align-items:center;gap:10px;color:#94a3b8;flex:1}',
 '.vs25-tool-btn{background:none;border:none;color:#94a3b8;cursor:pointer;padding:4px;display:flex;align-items:center;justify-content:center;border-radius:50%;transition:color .18s,background .18s}',
 '.vs25-tool-btn:hover{color:#2563eb;background:rgba(37,99,235,.08)}',
-'.vs25-snd-btn{background:none;border:none;color:#94a3b8;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:4px;border-radius:50%;transition:all .2s cubic-bezier(.34,1.56,.64,1);touch-action:manipulation}',
+'.vs25-snd-btn{background:none;border:none;color:#475569;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;min-width:44px;min-height:44px;padding:4px;border-radius:50%;transition:all .2s cubic-bezier(.34,1.56,.64,1);touch-action:manipulation;box-sizing:border-box}',
 '.vs25-snd-btn:hover{color:#2563eb;transform:scale(1.1)}',
 '.vs25-snd-btn:active{transform:scale(.92)}',
 '.vs25-snd-btn.has-text{color:#2563eb;transform:scale(1.05)}',
-'.vs25-snd-btn svg{width:20px;height:20px;fill:currentColor}',
+'.vs25-snd-btn svg{width:22px;height:22px;fill:currentColor}',
 '.vs25-snd-btn:disabled{color:#cbd5e1;cursor:not-allowed;transform:none;opacity:.6}',
 '.vs25-ft{text-align:center;padding:3px 8px 6px;color:var(--ft-c);font-size:.62rem;font-weight:500;background:var(--bar-bg);flex-shrink:0;transition:background .3s;letter-spacing:.02em}',
 '@media(max-width:539px){',
 '  .vs25-ft{padding-bottom:calc(6px + env(safe-area-inset-bottom,0px))}',
 '  .vs25-input-card{margin:6px 10px 10px}',
 '  .vs25-inp{font-size:1rem}',
-'  .vs25-chip{padding:8px 14px;font-size:.82rem}',
+'  .vs25-chip{padding:10px 16px;font-size:.82rem;min-height:44px}',
 '}'
 ].join('');
 
@@ -369,21 +495,22 @@ function build(){
   if(document.getElementById('vs25')) return;
   var w=document.createElement('div'); w.id='vs25';
   var st=document.createElement('style'); st.textContent=CSS; document.head.appendChild(st);
-  var inv=INVITES[Math.floor(Math.random()*INVITES.length)];
+  var invList = T.invites || INVITES;
+  var inv = invList[Math.floor(Math.random()*invList.length)];
 
   try { if(localStorage.getItem('vs25_theme')==='dark') w.classList.add('vs25-dark'); } catch(_) {}
 
   w.innerHTML=
-    '<button id="vs25-bbl" aria-label="Chat öffnen">'+
+    '<button id="vs25-bbl" aria-label="'+esc(T.bubbleOpen)+'">'+
       '<span class="vs25-bbl-chat"><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg></span>'+
       '<span class="vs25-bbl-close">✕</span>'+
       '<span id="vs25-status-dot" class="online"></span>'+
     '</button>'+
-    '<div id="vs25-inv"><button class="vs25-ix" id="vs25-ix" aria-label="Schließen">✕</button>'+esc(inv)+'</div>'+
-    '<div id="vs25-pnl" role="dialog" aria-label="PureSim Support Chat">'+
+    '<div id="vs25-inv"><button class="vs25-ix" id="vs25-ix" aria-label="'+esc(T.closeAria)+'">✕</button>'+esc(inv)+'</div>'+
+    '<div id="vs25-pnl" role="dialog" aria-label="'+esc(T.panelAria)+'">'+
       '<div class="vs25-drag"><span></span></div>'+
       '<div class="vs25-hdr">'+
-        '<button class="vs25-back" id="vs25-back" title="Schließen" aria-label="Schließen">'+
+        '<button class="vs25-back" id="vs25-back" title="'+esc(T.closeTitle)+'" aria-label="'+esc(T.closeAria)+'">'+
           '<svg viewBox="0 0 24 24"><path d="M19 11H7.83l4.88-4.88c.39-.39.39-1.03 0-1.42-.39-.39-1.02-.39-1.41 0l-6.59 6.59c-.39.39-.39 1.02 0 1.41l6.59 6.59c.39.39 1.02.39 1.41 0 .39-.39.39-1.02 0-1.41L7.83 13H19c.55 0 1-.45 1-1s-.45-1-1-1z"/></svg>'+
         '</button>'+
         '<div class="vs25-hdr-av">'+
@@ -391,31 +518,31 @@ function build(){
           '<span class="vs25-av-dot online" id="vs25-av-dot"></span>'+
         '</div>'+
         '<div class="vs25-hdr-info">'+
-          '<div class="vs25-hdr-name">Questions? Chat with us.</div>'+
+          '<div class="vs25-hdr-name">'+esc(T.hdrName)+'</div>'+
           '<div class="vs25-hdr-sub" id="vs25-hdr-sub">'+
             '<span class="vs25-hdr-sub-dot online" id="vs25-hdr-sub-dot"></span>'+
-            '<span id="vs25-hdr-sub-text">Typically replies under 2 hours.</span>'+
+            '<span id="vs25-hdr-sub-text">'+esc(T.hdrSub)+'</span>'+
           '</div>'+
         '</div>'+
-        '<button class="vs25-theme-btn" id="vs25-theme-btn" title="Hell/Dunkel" aria-label="Hell/Dunkel wechseln">'+
+        '<button class="vs25-theme-btn" id="vs25-theme-btn" title="'+esc(T.themeTitle)+'" aria-label="'+esc(T.themeAria)+'">'+
           '<svg class="vs25-moon" viewBox="0 0 24 24"><path d="M12.3 22h-.1c-5.5 0-10-4.5-10-10 0-4.8 3.5-8.9 8.2-9.8.5-.1 1 .2 1.2.7.2.5 0 1.1-.4 1.4-2.8 2.2-4.2 5.7-3.4 9.3.8 3.5 3.7 6.1 7.3 6.5.5.1.9.4 1 .9.1.5-.1 1-.6 1.2-1.2.5-2.4.8-3.7.8z"/></svg>'+
           '<svg class="vs25-sun" viewBox="0 0 24 24"><path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0s-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0s-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41s-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.01c.39-.39.39-1.03 0-1.41s-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/></svg>'+
         '</button>'+
         '<div class="vs25-toggle-wrap">'+
-          '<span class="vs25-toggle-label">KI</span>'+
+          '<span class="vs25-toggle-label">'+esc(T.kiToggle)+'</span>'+
           '<label class="vs25-toggle"><input type="checkbox" id="vs25-ki-toggle" checked><span class="vs25-slider"></span></label>'+
         '</div>'+
       '</div>'+
       '<div class="vs25-msgs" id="vs25-msgs" role="log" aria-live="polite"></div>'+
       '<div class="vs25-fq" id="vs25-fq">'+
-        '<div class="vs25-fq-label">✨ Schnellfragen</div>'+
+        '<div class="vs25-fq-label">'+esc(T.quickFaqLabel)+'</div>'+
         '<div class="vs25-fqg" id="vs25-fqg"></div>'+
       '</div>'+
       '<div class="vs25-input-card">'+
-        '<textarea class="vs25-inp" id="vs25-inp" placeholder="Compose your message…" rows="2" autocomplete="off" autocorrect="on" autocapitalize="sentences"></textarea>'+
+        '<textarea class="vs25-inp" id="vs25-inp" placeholder="'+esc(T.inputPlaceholder)+'" aria-label="'+esc(T.inputAria)+'" rows="2" autocomplete="off" autocorrect="on" autocapitalize="sentences"></textarea>'+
         '<div class="vs25-input-footer">'+
           '<div class="vs25-input-tools">'+
-            '<button type="button" class="vs25-tool-btn" id="vs25-emoji-btn" title="Emoji einfügen">'+
+            '<button type="button" class="vs25-tool-btn" id="vs25-emoji-btn" title="'+esc(T.emojiTitle)+'" aria-label="'+esc(T.emojiTitle)+'">'+
               '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">'+
                 '<circle cx="12" cy="12" r="10" />'+
                 '<path d="M8 14s1.5 2 4 2 4-2 4-2" />'+
@@ -424,14 +551,14 @@ function build(){
               '</svg>'+
             '</button>'+
           '</div>'+
-          '<button class="vs25-snd-btn" id="vs25-snd" aria-label="Nachricht senden">'+
+          '<button class="vs25-snd-btn" id="vs25-snd" aria-label="'+esc(T.sendAria)+'">'+
             '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">'+
               '<path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>'+
             '</svg>'+
           '</button>'+
         '</div>'+
       '</div>'+
-      '<div class="vs25-ft"><span id="vs25-ft-text">Powered by PureSim AI</span></div>'+
+      '<div class="vs25-ft"><span id="vs25-ft-text">'+esc(T.poweredBy)+'</span></div>'+
     '</div>';
 
   document.body.appendChild(w);
@@ -557,6 +684,8 @@ function passiveTrack(){
 }
 passiveTrack._lastSent=null;
 
+var _configWelcome = null;
+
 function startSession(){
   _safeFetch(API+'/api/widget/config').then(function(r){return r.json();}).then(function(d){
     var ft=document.getElementById('vs25-ft-text');
@@ -567,6 +696,14 @@ function startSession(){
         if(ir) ir.classList.add('vs25-is-last');
       }else if(d.poweredBy){
         ft.textContent=d.poweredBy;
+      }
+    }
+    if(d.welcomeMessage){
+      _configWelcome = d.welcomeMessage;
+      // Falls Verlauf leer ist und noch keine Begrüßung angezeigt wurde, jetzt anzeigen
+      var el=document.getElementById('vs25-msgs');
+      if(el && !el.children.length){
+        addMsg('b', _configWelcome);
       }
     }
     if(d.botName){
@@ -602,7 +739,10 @@ function startSession(){
     if(!d.chatId) return;
     chatId=d.chatId; _ssSet(chatId);
     passiveTrack._lastSent=location.href;
-    if(d.welcome) addMsg('b',d.welcome);
+    if(d.welcome) {
+      _configWelcome = d.welcome;
+      addMsg('b', d.welcome);
+    }
     loadHist(); startStatusPoll();
   });
 }
@@ -612,7 +752,13 @@ function loadHist(){
   _safeFetch(API+'/api/widget/history',{headers:{'X-Chat-ID':chatId}})
   .then(function(r){return r.json();}).then(function(d){
     var msgs=d.messages||[],el=document.getElementById('vs25-msgs');
-    if(msgs.length&&el&&!el.children.length){msgs.slice(-20).forEach(function(m){addMsg(m.role==='user'?'u':'b',m.content,true);});scrl();}
+    if(msgs.length&&el&&!el.children.length){
+      msgs.slice(-20).forEach(function(m){addMsg(m.role==='user'?'u':'b',m.content,true);});
+      scrl();
+    } else if(msgs.length === 0 && el && !el.children.length && _configWelcome){
+      // Chat-ID existiert (z.B. vom Beacon vor Klick), aber Verlauf ist leer -> Begrüßung anzeigen
+      addMsg('b', _configWelcome);
+    }
     if(msgs.length){ var last=msgs[msgs.length-1]; _lastMsgTs = last.created_at ? new Date(last.created_at).getTime() : Date.now(); }
   }).catch(function(){});
 }
@@ -633,7 +779,7 @@ function pollNewMessages(){
 }
 
 function loadFaq(){
-  _safeFetch(API+'/api/widget/faq').then(function(r){return r.json();}).then(function(d){
+  _safeFetch(API+'/api/widget/faq?lang='+encodeURIComponent(_pageLang)).then(function(r){return r.json();}).then(function(d){
     var bar=document.getElementById('vs25-fqg'); if(!bar) return; bar.innerHTML='';
     (d.faqs||[]).forEach(function(q){
       var btn=document.createElement('button'); btn.className='vs25-chip'; btn.textContent=q;
@@ -657,7 +803,7 @@ function sendMsg(){
     showTyp(false);document.getElementById('vs25-snd').disabled=false;
     if(d.reply) addMsg('b',d.reply);
     _lastMsgTs = Date.now();
-  }).catch(function(){showTyp(false);document.getElementById('vs25-snd').disabled=false;addMsg('b','Bitte erneut versuchen.');});
+  }).catch(function(){showTyp(false);document.getElementById('vs25-snd').disabled=false;addMsg('b',T.sendError);});
 }
 
 function toggleKI(){
@@ -668,10 +814,10 @@ function toggleKI(){
   _safeFetch(API+'/api/widget/handover',{method:'POST',headers:{'Content-Type':'application/json','X-Chat-ID':chatId},
     body:JSON.stringify({chatId,request:_handover})}).catch(function(){});
   if(_handover){
-    addMsg('b','👤 Ein Mitarbeiter wurde benachrichtigt und meldet sich bald. Die KI ist pausiert.');
+    addMsg('b', T.kiStaffAlert);
     setStatusUI('manual');
   } else {
-    addMsg('b','✅ KI-Support ist wieder aktiv.');
+    addMsg('b', T.kiActiveAlert);
     setStatusUI('online');
   }
 }
@@ -686,7 +832,7 @@ function setStatusUI(status){
   if(avDot){avDot.className='vs25-av-dot '+(status==='online'?'online':status);}
   if(subDot){subDot.className='vs25-hdr-sub-dot '+(status==='online'?'online':status);}
   if(subTxt){
-    subTxt.textContent=status==='online'?'KI Assistent · Online':status==='manual'?'Mitarbeiter angefordert':'KI Offline';
+    subTxt.textContent=status==='online'?T.statusOnline:status==='manual'?T.statusManual:T.statusOffline;
   }
   if(tog&&status!=='offline'){tog.checked=status==='online';}
 }
@@ -723,7 +869,7 @@ function openChat(){
     pnl.classList.add('on');
   }
   var bbl=document.getElementById('vs25-bbl');
-  if(bbl){bbl.classList.add('vs25-open');bbl.setAttribute('aria-label','Chat schließen');}
+  if(bbl){bbl.classList.add('vs25-open');bbl.setAttribute('aria-label', T.bubbleClose);}
   setTimeout(function(){var i=document.getElementById('vs25-inp');if(i)i.focus();scrl();},80);
   trackPage();
 }
@@ -732,7 +878,7 @@ function closeChat(){
   var pnl=document.getElementById('vs25-pnl');
   if(pnl) pnl.classList.remove('on');
   var bbl=document.getElementById('vs25-bbl');
-  if(bbl){bbl.classList.remove('vs25-open');bbl.setAttribute('aria-label','Chat öffnen');}
+  if(bbl){bbl.classList.remove('vs25-open');bbl.setAttribute('aria-label', T.bubbleOpen);}
 }
 
 // Global API für puresim Storefront
@@ -753,7 +899,8 @@ function trackPage(){
 function addMsg(role,text,noScroll){
   var el=document.getElementById('vs25-msgs'); if(!el) return;
   var d=document.createElement('div'); d.className='vs25-msg '+role;
-  var t=new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+  var locale = _pageLang === 'en' ? 'en-US' : 'de-DE';
+  var t=new Date().toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'});
   var ticks = role === 'u' ? '<span class="vs25-ticks">✓✓</span>' : '';
   var avatar = role === 'b' ? '<img src="/logo.png" alt="PureSim Logo" class="vs25-bot-avatar" onError="this.onerror=null;this.src=\'https://puresim.net/logo.png\';" />' : '';
   d.innerHTML=avatar+

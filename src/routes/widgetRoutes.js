@@ -317,7 +317,10 @@ router.post('/activity', async (req, res) => {
 });
 
 router.get('/faq', async (req, res) => {
-  const faqs = ['Welche eSIMs habt ihr?', 'Wie aktiviere ich?', 'Bestellstatus?', 'Unlimited vs Travel?', 'Gültigkeit?'];
+  const lang = (req.query.lang || '').toLowerCase().startsWith('en') ? 'en' : 'de';
+  const faqs = lang === 'en'
+    ? ['Which eSIMs do you offer?', 'How do I activate?', 'Order status?', 'Unlimited vs Travel?', 'Validity period?']
+    : ['Welche eSIMs habt ihr?', 'Wie aktiviere ich?', 'Bestellstatus?', 'Unlimited vs Travel?', 'Gültigkeit?'];
   res.json({ faqs });
 });
 
@@ -352,11 +355,13 @@ router.post('/leave', async (req, res) => {
 router.get('/config', async (req, res) => {
   try {
     const { data: s } = await supabase.from('settings').select('welcome_message, widget_powered_by').single();
+    let powered = s?.widget_powered_by || 'Powered by PureSim AI';
+    if (!powered || powered.includes('ValueShop')) powered = 'Powered by PureSim AI';
     res.json({
       enabled:        true,
       botName:        'PureSim Support',
       welcomeMessage: s?.welcome_message || 'Hallo!',
-      poweredBy:      s?.widget_powered_by || 'Powered by PureSim AI'
+      poweredBy:      powered
     });
   } catch { res.json({ enabled: true, botName: 'PureSim Support', poweredBy: 'Powered by PureSim AI' }); }
 });

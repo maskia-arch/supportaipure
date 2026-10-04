@@ -30,14 +30,12 @@ app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// /widget.js direkt mit no-cache fuer schnelle Updates beim Kunden
-app.get('/widget.js', (req, res) => {
+// /widget.js mit Cache-Header (1h browser cache mit must-revalidate/ETag fuer schnelle Revalidierung)
+app.get(['/widget.js', '/widget-:ver.js'], (req, res) => {
   res.setHeader('Content-Type', 'application/javascript; charset=UTF-8');
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
+  res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('X-Widget-Version', '1.6.78');
+  res.setHeader('X-Widget-Version', '1.7.0');
   res.sendFile(path.join(__dirname, 'public', 'widget.js'));
 });
 

@@ -688,7 +688,20 @@ window.PureSimSupport = {
   }
 };
 
+function _isBotClient(){
+  try {
+    if (navigator.webdriver) return true;
+    if (window.__nightmare || window._phantom || window.callPhantom || window.__selenium_evaluate || window.domAutomation) return true;
+    if (window.screen && (window.screen.width === 0 || window.screen.height === 0)) return true;
+    var ua = (navigator.userAgent || '').toLowerCase();
+    if (!ua || ua.length < 8) return true;
+    if (/(googlebot|bingbot|yandexbot|duckduckbot|slurp|baiduspider|semrush|ahrefs|bytespider|mj12bot|dotbot|petalbot|bot|crawler|spider|scraper|headless|lighthouse)/i.test(ua)) return true;
+  } catch(_) {}
+  return false;
+}
+
 function passiveTrack(){
+  if (_isBotClient()) return;
   var currentUrl=location.href;
   if(passiveTrack._lastSent===currentUrl) return;
   passiveTrack._lastSent=currentUrl;

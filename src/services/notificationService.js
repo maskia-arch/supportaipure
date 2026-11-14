@@ -14,6 +14,7 @@
 
 const supabase = require('../config/supabase');
 const logger   = require('../utils/logger');
+const { isBotUserAgent } = require('../utils/botDetector');
 
 let _wp           = null;
 let _wpReady      = false;
@@ -178,19 +179,23 @@ const notificationService = {
   },
 
   // ── NEUER Besucher auf der Website ───────────────────────────────────────
-  async notifyNewVisitor({ chatId, visitorNumber, pageTitle, pageUrl, isNew }) {
+  async notifyNewVisitor({ chatId, visitorNumber, pageTitle, pageUrl, isNew, userAgent }) {
     if (!_init() || !chatId) return;
+    if (userAgent && isBotUserAgent(userAgent)) return;
 
     const key = String(chatId);
     const now = Date.now();
     const last = _firstVisitSent.get(key) || 0;
     if (now - last < FIRST_VISIT_TTL_MS) {
-      return this.notifyVisitorActivity({ chatId, visitorNumber, pageTitle, pageUrl });
+      return this.notifyVisitorActivity({ chatId, visitorNumber, pageTitle, pageUrl, userAgent });
     }
+
+    const identity = await this._getVisitorIdentity(chatId);
+    if (identity?.isBot) return;
+
     _firstVisitSent.set(key, now);
     _lastActivitySent.set(key, { page: String(pageTitle || '').trim(), ts: now });
 
-    const identity = await this._getVisitorIdentity(chatId);
     const vLabel = _formatVisitor(identity?.visitorNumber || visitorNumber);
 
     let title, body;
@@ -215,8 +220,12 @@ const notificationService = {
   },
 
   // ── Besucher-Aktivität (Page-Wechsel) ───────────────────────────────────
-  async notifyVisitorActivity({ chatId, visitorNumber, pageTitle, pageUrl }) {
+  async notifyVisitorActivity({ chatId, visitorNumber, pageTitle, pageUrl, userAgent }) {
     if (!_init() || !chatId) return;
+    if (userAgent && isBotUserAgent(userAgent)) return;
+
+    const identity = await this._getVisitorIdentity(chatId);
+    if (identity?.isBot) return;
 
     const key  = String(chatId);
     const now  = Date.now();
@@ -233,7 +242,6 @@ const notificationService = {
     }
     _lastActivitySent.set(key, { page, ts: now });
 
-    const identity = await this._getVisitorIdentity(chatId);
     const vLabel = _formatVisitor(identity?.visitorNumber || visitorNumber);
 
     let title, body;
@@ -263,15 +271,20 @@ const notificationService = {
     try {
       const { data: v } = await supabase
         .from('widget_visitors')
-        .select('customer_email, customer_name, visitor_number, metadata')
+        .select('customer_email, customer_name, visitor_number, metadata, user_agent')
         .eq('chat_id', chatId)
         .maybeSingle();
       if (!v) return null;
+
+      if (isBotUserAgent(v.user_agent)) {
+        return { isBot: true };
+      }
 
       let meta = {};
       try { meta = typeof v.metadata === 'string' ? JSON.parse(v.metadata) : (v.metadata || {}); } catch(_) {}
 
       return {
+        isBot: false,
         email: v.customer_email || null,
         name: v.customer_name || null,
         visitorNumber: v.visitor_number || null,

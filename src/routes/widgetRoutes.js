@@ -5,6 +5,7 @@ const visitorService   = require('../services/visitorService');
 const supabase         = require('../config/supabase');
 const logger           = require('../utils/logger');
 const countryTranslator = require('../utils/countryTranslator');
+const botDetector      = require('../utils/botDetector');
 
 router.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -30,6 +31,10 @@ router.get('/health', (req, res) => {
 
 router.post('/beacon', async (req, res) => {
   try {
+    if (botDetector.isBot(req)) {
+      return res.json({ ok: true, ignored: 'bot' });
+    }
+
     const ip = visitorService._getClientIp(req);
     const visitorId = (req.body.visitorId || '').trim().substring(0, 64) || null;
     const passedCid = req.headers['x-chat-id'] || req.body.chatId || null;
@@ -162,6 +167,10 @@ function getSmartTitle(url, titleFromBrowser) {
 
 router.post('/init', async (req, res) => {
   try {
+    if (botDetector.isBot(req)) {
+      return res.json({ banned: true, message: 'Bot access ignored.' });
+    }
+
     const ip = visitorService._getClientIp(req);
     const visitorId = (req.body.visitorId || '').trim().substring(0, 64) || null;
     const passedCid = req.headers['x-chat-id'] || req.body.chatId || null;
@@ -222,6 +231,10 @@ router.post('/init', async (req, res) => {
  */
 router.post('/identify', async (req, res) => {
   try {
+    if (botDetector.isBot(req)) {
+      return res.json({ success: true, ignored: 'bot' });
+    }
+
     const chatId = req.headers['x-chat-id'] || req.body.chatId;
     if (!chatId) return res.status(400).json({ error: 'Missing chatId' });
 
@@ -280,6 +293,9 @@ router.get('/history', async (req, res) => {
 });
 
 router.post('/activity', async (req, res) => {
+  if (botDetector.isBot(req)) {
+    return res.sendStatus(200);
+  }
   res.sendStatus(200);
   setImmediate(async () => {
     try {

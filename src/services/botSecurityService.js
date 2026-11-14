@@ -613,9 +613,13 @@ class BotSecurityService {
         }
       }
 
-      logger.info(`[BotSecurity] Seed: ${groupedByIp.size} eindeutige Bot-IPs gefunden. Speichere...`);
+      const sortedEntries = Array.from(groupedByIp.entries())
+        .sort((a, b) => b[1].count - a[1].count)
+        .slice(0, 100);
 
-      for (const [ip, entry] of groupedByIp.entries()) {
+      logger.info(`[BotSecurity] Seed: ${sortedEntries.length} aktivste Bot-IPs werden initialisiert...`);
+
+      for (const [ip, entry] of sortedEntries) {
         const classification = this.classifyBot(entry.ua, ip);
         const geo = await this.resolveGeoIp(ip, classification.defaultOrg, classification.defaultCountry, classification.defaultCode);
 

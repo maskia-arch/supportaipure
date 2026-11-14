@@ -71,6 +71,12 @@ const server = app.listen(port, () => {
       couponService.startDailyScheduler();
       logger.info('[eSIM-Berater] Coupon Scheduler aktiv');
     } catch(e) { logger.warn(e.message); }
+
+    // Bot-Sicherheitsdienst initialisieren
+    try {
+      const botSecurityService = require('./services/botSecurityService');
+      botSecurityService.init().catch(e => logger.warn('[BotSecurity] Init Fehler: ' + e.message));
+    } catch(e) { logger.warn(e.message); }
   }, 5000);
 });
 

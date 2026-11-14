@@ -1252,4 +1252,5 @@ const supabase = {
   }
 };
 
+supabase.pool = pool;
 module.exports = supabase;

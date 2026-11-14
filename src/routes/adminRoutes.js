@@ -96,4 +96,10 @@ router.get('/coupons/active',      ctrl.getActiveCoupon);
 router.post('/coupons/create-now', ctrl.createCouponNow);
 router.get('/coupons/history',     ctrl.getCouponHistory);
 
+// ─── Sicherheits-Menü: Bot-Monitoring & Traffic-Filter ─────────────────────
+router.get('/security/bots',          ctrl.getSecurityBots);
+router.post('/security/bots/block',   ctrl.blockSecurityBot);
+router.post('/security/bots/unblock', ctrl.unblockSecurityBot);
+router.post('/security/settings',     ctrl.updateSecuritySettings);
+
 module.exports = router;

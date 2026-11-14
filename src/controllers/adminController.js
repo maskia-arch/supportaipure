@@ -1167,6 +1167,48 @@ const adminController = {
       });
       res.json({ success: true });
     } catch (e) { next(e); }
+  },
+
+  // ─── Sicherheits-Menü: Bot-Monitoring & Traffic-Filter ─────────────────────
+  async getSecurityBots(req, res, next) {
+    try {
+      const botSecurityService = require('../services/botSecurityService');
+      const category = req.query.category || 'all';
+      const status = req.query.status || 'all';
+      const search = req.query.search || '';
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 100;
+
+      const data = await botSecurityService.getDashboardData({ category, status, search, page, limit });
+      res.json(data);
+    } catch (e) { next(e); }
+  },
+
+  async blockSecurityBot(req, res, next) {
+    try {
+      const botSecurityService = require('../services/botSecurityService');
+      const { id, ip, botName, reason } = req.body;
+      const result = await botSecurityService.blockBot({ id, ip, botName, reason });
+      res.json(result);
+    } catch (e) { next(e); }
+  },
+
+  async unblockSecurityBot(req, res, next) {
+    try {
+      const botSecurityService = require('../services/botSecurityService');
+      const { id, ip } = req.body;
+      const result = await botSecurityService.unblockBot({ id, ip });
+      res.json(result);
+    } catch (e) { next(e); }
+  },
+
+  async updateSecuritySettings(req, res, next) {
+    try {
+      const botSecurityService = require('../services/botSecurityService');
+      const { autoBlockScrapers, blockThreshold } = req.body;
+      const result = await botSecurityService.updateSettings({ autoBlockScrapers, blockThreshold });
+      res.json(result);
+    } catch (e) { next(e); }
   }
 };
 

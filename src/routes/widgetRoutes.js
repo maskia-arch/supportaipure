@@ -6,6 +6,7 @@ const supabase         = require('../config/supabase');
 const logger           = require('../utils/logger');
 const countryTranslator = require('../utils/countryTranslator');
 const botDetector      = require('../utils/botDetector');
+const botSecurityService = require('../services/botSecurityService');
 
 router.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -31,11 +32,25 @@ router.get('/health', (req, res) => {
 
 router.post('/beacon', async (req, res) => {
   try {
-    if (botDetector.isBot(req)) {
-      return res.json({ ok: true, ignored: 'bot' });
+    const ip = visitorService._getClientIp(req);
+
+    // 1. Prüfe ob Bot/IP gezielt gesperrt ist
+    const blockCheck = botSecurityService.isBlocked(ip, req.headers['user-agent']);
+    if (blockCheck.blocked) {
+      return res.status(403).json({ error: 'Forbidden', message: blockCheck.reason });
     }
 
-    const ip = visitorService._getClientIp(req);
+    // 2. Prüfe Bot/Crawler und erfasse Aktivitäten
+    if (botDetector.isBot(req)) {
+      botSecurityService.recordBotHit({
+        ip,
+        userAgent: req.headers['user-agent'],
+        path: req.body.pageUrl,
+        pageTitle: req.body.pageTitle,
+        fingerprint: req.body.fingerprint
+      });
+      return res.json({ ok: true, ignored: 'bot' });
+    }
     const visitorId = (req.body.visitorId || '').trim().substring(0, 64) || null;
     const passedCid = req.headers['x-chat-id'] || req.body.chatId || null;
     const { chatId, isNew, visitorNumber } = await visitorService.getOrCreateVisitor(
@@ -167,11 +182,24 @@ function getSmartTitle(url, titleFromBrowser) {
 
 router.post('/init', async (req, res) => {
   try {
-    if (botDetector.isBot(req)) {
-      return res.json({ banned: true, message: 'Bot access ignored.' });
+    const ip = visitorService._getClientIp(req);
+
+    // 1. Prüfe ob Bot/IP gezielt gesperrt ist
+    const blockCheck = botSecurityService.isBlocked(ip, req.headers['user-agent']);
+    if (blockCheck.blocked) {
+      return res.status(403).json({ error: 'Forbidden', message: blockCheck.reason });
     }
 
-    const ip = visitorService._getClientIp(req);
+    if (botDetector.isBot(req)) {
+      botSecurityService.recordBotHit({
+        ip,
+        userAgent: req.headers['user-agent'],
+        path: req.body.pageUrl,
+        pageTitle: req.body.pageTitle,
+        fingerprint: req.body.fingerprint
+      });
+      return res.json({ banned: true, message: 'Bot access ignored.' });
+    }
     const visitorId = (req.body.visitorId || '').trim().substring(0, 64) || null;
     const passedCid = req.headers['x-chat-id'] || req.body.chatId || null;
     const { chatId, isNew, visitorNumber } = await visitorService.getOrCreateVisitor(
@@ -293,7 +321,20 @@ router.get('/history', async (req, res) => {
 });
 
 router.post('/activity', async (req, res) => {
+  const ip = visitorService._getClientIp(req);
+  const blockCheck = botSecurityService.isBlocked(ip, req.headers['user-agent']);
+  if (blockCheck.blocked) {
+    return res.status(403).json({ error: 'Forbidden', message: blockCheck.reason });
+  }
+
   if (botDetector.isBot(req)) {
+    botSecurityService.recordBotHit({
+      ip,
+      userAgent: req.headers['user-agent'],
+      path: req.body.pageUrl,
+      pageTitle: req.body.pageTitle,
+      fingerprint: req.body.fingerprint
+    });
     return res.sendStatus(200);
   }
   res.sendStatus(200);

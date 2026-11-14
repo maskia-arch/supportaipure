@@ -53,20 +53,41 @@ const messageProcessor = {
     // ── Order-Abfrage Wizard (Falls der User auf die Abfrage antwortet) ───────
     if (text && chat.metadata && chat.metadata.waiting_for_order_id) {
       const trimmedText = text.trim();
-      const ID_PATTERN = '([a-f0-9\\-]+|[0-9]+)';
-      const matchesPattern = new RegExp('^' + ID_PATTERN + '$', 'i').test(trimmedText);
+      const cancelKeywords = /^(\/cancel|cancel|abbrechen|abbruch|stop)$/i;
 
-      if (matchesPattern) {
+      if (cancelKeywords.test(trimmedText)) {
+        const updatedMetadata = { ...chat.metadata, waiting_for_order_id: false };
+        try { await supabase.from('chats').update({ metadata: updatedMetadata }).eq('id', chat.id); } catch (e) {}
+        const cancelReply = 'Die Bestellabfrage wurde abgebrochen. Wie kann ich dir sonst weiterhelfen?';
+        void (async () => {
+          try {
+            await supabase.from('messages').insert([{ chat_id: chat.id, role: 'user', content: text }]);
+            await supabase.from('messages').insert([{ chat_id: chat.id, role: 'assistant', content: cancelReply }]);
+          } catch (_) {}
+        })();
+        this._updateChatPreview(chat.id, cancelReply, 'assistant');
+        if (platform === 'telegram') {
+          await telegramService.sendMessage(chatId, cancelReply, { message_thread_id: threadId, token: botToken }).catch(() => {});
+        }
+        return cancelReply;
+      }
+
+      // Prüfe, ob es wie ein Bestellbezeichner aussieht (INV-..., #..., UUID, 8-Hex, ICCID, oder alphanumerisch 6-64 Zeichen)
+      const isPotentialId = /^(?:#|INV[-_:\s]*)?[a-f0-9]{6,36}(?:-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?$/i.test(trimmedText) ||
+                            /^89\d{10,22}$/.test(trimmedText) ||
+                            /^[a-f0-9_-]{6,64}$/i.test(trimmedText);
+
+      if (isPotentialId) {
         const invoiceId = trimmedText;
         let orderReply;
         try {
           const storefrontService = require('./storefrontService');
-          const shopUrl = process.env.STOREFRONT_URL || process.env.SHOP_URL || process.env.SELLAUTH_SHOP_URL || '';
+          const shopUrl = process.env.STOREFRONT_URL || process.env.SHOP_URL || process.env.SELLAUTH_SHOP_URL || 'https://puresim.net';
           const order = await storefrontService.getInvoice(invoiceId);
           if (!order) {
-            orderReply = 'Es wurde keine Bestellung mit dieser Bestellnummer oder ICCID gefunden.';
+            orderReply = `Es wurde keine Bestellung mit der Kennung "${invoiceId}" gefunden. Bitte prüfe deine Bestellnummer aus der Bestätigungs-E-Mail (z. B. <code>INV-A1B2C3D4</code>) oder wende dich an den Support.`;
           } else {
-            orderReply = storefrontService.formatInvoiceForCustomer(order, shopUrl);
+            orderReply = storefrontService.formatInvoiceForCustomer(order, shopUrl, platform);
           }
         } catch (err) {
           logger.warn(`[/order Wizard] ${err.message}`);
@@ -95,7 +116,7 @@ const messageProcessor = {
         }
         return orderReply;
       } else {
-        const errorReply = 'Das eingegebene Format scheint ungültig zu sein. Bitte sende mir eine gültige Bestellungs-ID (z. B. <code>abcde12345-0000000000001</code>) oder schreibe /cancel, um abzubrechen.';
+        const errorReply = 'Das Format konnte nicht als Bestellnummer erkannt werden. Bitte sende mir deine Bestell-ID (z. B. <code>INV-A1B2C3D4</code>, die Nummer aus deiner Bestätigungs-E-Mail oder deine ICCID) oder schreibe /cancel, um abzubrechen.';
         void (async () => {
           try {
             await supabase.from('messages').insert([{ chat_id: chat.id, role: 'user', content: text }]);
@@ -122,7 +143,7 @@ const messageProcessor = {
         await supabase.from('chats').update({ metadata: updatedMetadata }).eq('id', chat.id);
       } catch (e) {}
 
-      const promptReply = 'Bitte sende mir deine Bestellungs-ID (z. B. <code>abcde12345-0000000000001</code>), damit ich den Status deiner Bestellung prüfen kann. (Schreibe /cancel, um abzubrechen).';
+      const promptReply = 'Bitte sende mir deine Bestellungs-ID (z. B. <code>INV-A1B2C3D4</code>, deine Bestell-UUID oder ICCID), damit ich den aktuellen Status deiner Bestellung sofort prüfen kann. (Schreibe /cancel, um abzubrechen).';
       void (async () => {
         try { await supabase.from('messages').insert([{ chat_id: chat.id, role: 'assistant', content: promptReply }]); } catch (_) {}
       })();
@@ -140,40 +161,43 @@ const messageProcessor = {
 
     // ── Standalone ID Erkennung (Automatische Abfrage bei passendem Muster) ────
     if (text) {
-      const STANDALONE_ID_REGEX = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|89[0-9]{10,18})$/i;
-      if (STANDALONE_ID_REGEX.test(text.trim())) {
-        const invoiceId = text.trim();
-        let orderReply;
+      const trimmedText = text.trim();
+      const STANDALONE_ID_REGEX = /^(?:(?:#|INV[-_:\s]*)[a-f0-9]{6,36}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|89[0-9]{10,22})$/i;
+      if (STANDALONE_ID_REGEX.test(trimmedText)) {
+        const invoiceId = trimmedText;
+        let orderReply = null;
         try {
           const storefrontService = require('./storefrontService');
-          const shopUrl = process.env.STOREFRONT_URL || process.env.SHOP_URL || process.env.SELLAUTH_SHOP_URL || '';
+          const shopUrl = process.env.STOREFRONT_URL || process.env.SHOP_URL || process.env.SELLAUTH_SHOP_URL || 'https://puresim.net';
           const order = await storefrontService.getInvoice(invoiceId);
-          if (!order) {
-            orderReply = 'Es wurde keine Bestellung mit dieser Bestellnummer oder ICCID gefunden.';
-          } else {
-            orderReply = storefrontService.formatInvoiceForCustomer(order, shopUrl);
+          if (order) {
+            orderReply = storefrontService.formatInvoiceForCustomer(order, shopUrl, platform);
+          } else if (/^(?:INV|#|89)/i.test(trimmedText) || trimmedText.length === 36) {
+            orderReply = `Es wurde keine Bestellung mit der Kennung "${invoiceId}" gefunden. Bitte prüfe deine Bestellnummer aus der Bestätigungs-E-Mail (z. B. INV-A1B2C3D4) oder wende dich an unseren Support.`;
           }
         } catch (err) {
           logger.warn(`[Standalone ID Lookup] ${err.message}`);
           orderReply = 'Fehler bei der Abfrage. Bitte überprüfe deine Bestellnummer oder wende dich an den Support.';
         }
 
-        void (async () => {
-          try {
-            await supabase.from('messages').insert([{ chat_id: chat.id, role: 'user', content: text }]);
-            await supabase.from('messages').insert([{ chat_id: chat.id, role: 'assistant', content: orderReply }]);
-          } catch (_) {}
-        })();
-        this._updateChatPreview(chat.id, orderReply, 'assistant');
+        if (orderReply) {
+          void (async () => {
+            try {
+              await supabase.from('messages').insert([{ chat_id: chat.id, role: 'user', content: text }]);
+              await supabase.from('messages').insert([{ chat_id: chat.id, role: 'assistant', content: orderReply }]);
+            } catch (_) {}
+          })();
+          this._updateChatPreview(chat.id, orderReply, 'assistant');
 
-        if (platform === 'telegram') {
-          await telegramService.sendMessage(chatId, orderReply, {
-            message_thread_id: threadId,
-            token: botToken,
-            parse_mode: 'HTML'
-          }).catch(() => {});
+          if (platform === 'telegram') {
+            await telegramService.sendMessage(chatId, orderReply, {
+              message_thread_id: threadId,
+              token: botToken,
+              parse_mode: 'HTML'
+            }).catch(() => {});
+          }
+          return orderReply;
         }
-        return orderReply;
       }
     }
 
@@ -247,28 +271,25 @@ const messageProcessor = {
 
     // ── /order Handler: direkter Invoice-Lookup vor AI-Call ────────────────
     // Wenn User schreibt "/order INVOICE_ID" oder "bestellung INVOICE_ID",
-    // wird die Bestellung direkt via sellauth abgefragt — keine AI-Tokens
-    // verbraucht und der Berater muss nicht raten.
+    // wird die Bestellung direkt abgefragt — spart AI-Tokens und liefert exakte Daten.
     if (text) {
-      const ID_PATTERN = '([a-f0-9\\-]+|[0-9]+)';
-      const orderMatch =
-        text.match(new RegExp('^\\/order\\s+' + ID_PATTERN, 'i')) ||
-        text.match(new RegExp('(?:bestellung|invoice|order|rechnung)[:\\s#]+' + ID_PATTERN, 'i'));
-      if (orderMatch) {
-        const invoiceId = orderMatch[1];
+      const orderCmdMatch = text.match(/^\/order\s+((?:#|INV[-_:\s]*)?[a-z0-9_-]+)/i) ||
+                            text.match(/(?:bestellung|invoice|order|rechnung|status)(?:(?:\s+von|\s+zu|\s+für|\s+meiner)?[:\s#]+)((?:#|INV[-_:\s]*)?[a-z0-9_-]+)/i);
+      if (orderCmdMatch) {
+        const invoiceId = orderCmdMatch[1].trim();
         let orderReply;
         try {
           const storefrontService = require('./storefrontService');
-          const shopUrl = process.env.STOREFRONT_URL || process.env.SHOP_URL || process.env.SELLAUTH_SHOP_URL || '';
+          const shopUrl = process.env.STOREFRONT_URL || process.env.SHOP_URL || process.env.SELLAUTH_SHOP_URL || 'https://puresim.net';
           const order = await storefrontService.getInvoice(invoiceId);
           if (!order) {
-            orderReply = 'Es wurde keine Bestellung mit dieser Bestellnummer oder ICCID gefunden.';
+            orderReply = `Es wurde keine Bestellung mit der Kennung "${invoiceId}" gefunden. Bitte prüfe deine Bestellnummer (z. B. INV-A1B2C3D4) oder ICCID.`;
           } else {
-            orderReply = storefrontService.formatInvoiceForCustomer(order, shopUrl);
+            orderReply = storefrontService.formatInvoiceForCustomer(order, shopUrl, platform);
           }
         } catch (err) {
           logger.warn(`[/order] ${err.message}`);
-          orderReply = 'Fehler bei der Abfrage. Bitte überprüfe deine Bestellnummer.';
+          orderReply = 'Fehler bei der Abfrage. Bitte überprüfe deine Bestellnummer oder wende dich an den Support.';
         }
         // Antwort in DB loggen + Vorschau updaten
         void (async () => {
@@ -326,8 +347,25 @@ const messageProcessor = {
       } catch (e) {}
     }
 
+    // Prüfe auf Bestell-ID in der Nachricht, um Echtzeit-Bestelldaten an die KI zu übergeben
+    let orderContext = null;
+    const inlineIdMatch = text.match(/\b((?:INV[-_:\s]*)?[a-f0-9]{6,36}(?:-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?|89\d{10,22})\b/i);
+    if (inlineIdMatch && (/^(?:INV|#|89)/i.test(inlineIdMatch[1]) || inlineIdMatch[1].length === 36)) {
+      try {
+        const storefrontService = require('./storefrontService');
+        const shopUrl = process.env.STOREFRONT_URL || process.env.SHOP_URL || process.env.SELLAUTH_SHOP_URL || 'https://puresim.net';
+        const detectedOrder = await storefrontService.getInvoice(inlineIdMatch[1]);
+        if (detectedOrder) {
+          orderContext = storefrontService.formatInvoiceForAI(detectedOrder, shopUrl);
+          logger.info(`[MP] Echtzeit-Bestelldaten für "${inlineIdMatch[1]}" in KI-Kontext injiziert (Status: ${detectedOrder.status})`);
+        }
+      } catch (err) {
+        logger.warn(`[MP] Inline Order-Lookup Fehler: ${err.message}`);
+      }
+    }
+
     const dateContext = `HEUTIGES DATUM: ${new Date().toLocaleDateString('de-DE')}`;
-    const fullSummary = [chatSummary, dateContext, couponContext].filter(Boolean).join('\n\n') || null;
+    const fullSummary = [chatSummary, dateContext, couponContext, orderContext].filter(Boolean).join('\n\n') || null;
 
     let aiResult;
     try {

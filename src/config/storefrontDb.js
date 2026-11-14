@@ -176,7 +176,13 @@ class StorefrontQueryBuilder {
 }
 
 const storefrontDb = isStorefrontPostgres ? {
-  from: (table) => new StorefrontQueryBuilder(table)
-} : supabase;
+  from: (table) => new StorefrontQueryBuilder(table),
+  query: (sql, params) => storefrontPool.query(sql, params),
+  pool: storefrontPool
+} : {
+  from: (table) => supabase.from(table),
+  query: null,
+  pool: null
+};
 
 module.exports = storefrontDb;

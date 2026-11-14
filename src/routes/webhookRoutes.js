@@ -88,7 +88,7 @@ async function handleTelegramUpdate(updateBody) {
         '• Stelle mir Fragen zu unseren eSIM-Tarifen\n' +
         '• Frage nach passenden Ländern oder Datenvolumen\n' +
         '• Frage nach aktuellen Coupons & Aktionen\n\n' +
-        '<b>/order</b> &lt;Invoice-ID&gt; — Bestellstatus prüfen\n' +
+        '<b>/order</b> &lt;Bestell-ID&gt; — Bestellstatus prüfen (z. B. <code>/order INV-A1B2C3D4</code>)\n' +
         '<b>/start</b> — Begrüßung\n\n' +
         'Bei komplexen Anliegen: @autoacts';
       await tgSend(helpText);
@@ -96,7 +96,7 @@ async function handleTelegramUpdate(updateBody) {
     }
 
     // ── /order <InvoiceId> ──────────────────────────────────────────────────
-    const ID_PATTERN = '([a-f0-9\\-]+|[0-9]+)';
+    const ID_PATTERN = '((?:#|INV[-_:\\s]*)?[a-f0-9\\-]+|[0-9]+)';
     const orderMatch =
       text.match(new RegExp('^\\/order\\s+' + ID_PATTERN, 'i')) ||
       text.match(new RegExp('(?:bestellung|invoice|order|rechnung)[:\\s#]+' + ID_PATTERN, 'i'));
@@ -105,13 +105,13 @@ async function handleTelegramUpdate(updateBody) {
       const invoiceId = orderMatch[1];
       try {
         const storefrontService = require('../services/storefrontService');
-        const shopUrl = process.env.STOREFRONT_URL || process.env.SHOP_URL || process.env.SELLAUTH_SHOP_URL || '';
+        const shopUrl = process.env.STOREFRONT_URL || process.env.SHOP_URL || process.env.SELLAUTH_SHOP_URL || 'https://puresim.net';
         const order = await storefrontService.getInvoice(invoiceId);
         if (!order) {
-          await tgSend('Bestellung nicht gefunden. Bitte prüfe die Bestellnummer oder ICCID.');
+          await tgSend(`Bestellung mit der Kennung "${invoiceId}" nicht gefunden. Bitte prüfe die Bestellnummer (z. B. INV-A1B2C3D4) oder ICCID.`);
           return;
         }
-        const response = storefrontService.formatInvoiceForCustomer(order, shopUrl);
+        const response = storefrontService.formatInvoiceForCustomer(order, shopUrl, 'telegram');
         await tgSend(response, { parse_mode: 'HTML' });
       } catch (err) {
         logger.warn(`[Telegram Webhook Order] ${err.message}`);

@@ -407,22 +407,97 @@ Preis: ${tariff.sale_price_eur} EUR
   },
 
   /**
-   * Holt eine Bestellung aus der DB anhand von ID, ICCID oder Top-Up ICCID.
+   * Holt eine Bestellung aus der DB anhand von ID, INV-Nummer, UUID, Checkout-Ref,
+   * Crypto-Session, ICCID oder Setup-Token.
    */
-
   async getInvoice(invoiceId) {
     if (!invoiceId) return null;
-    const cleanId = String(invoiceId).trim();
+    let cleanId = String(invoiceId).trim();
+    // Bereinige führende '#', 'INV-', 'INV:', 'INV_', Leerzeichen
+    cleanId = cleanId.replace(/^#+/, '').replace(/^INV[-_:\s]*/i, '').trim();
+    if (!cleanId) return null;
 
-    let query = storefrontDb.from('orders').select('*');
+    // 1. Direkte Postgres-Abfrage mit Joins (schnell, unterstützt alle Varianten)
+    if (storefrontDb.query) {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
+      const isShortHex = /^[0-9a-f]{6,12}$/i.test(cleanId);
+      const isIccid = /^89\d{10,22}$/.test(cleanId);
 
-    // Prüfe, ob es eine UUID ist (z. B. "550e8400-e29b-41d4-a716-446655440000")
+      let sql = '';
+      let params = [];
+
+      if (isUuid) {
+        sql = `
+          SELECT o.*, t.name as tariff_name, t.country_name, t.country_code, t.flag_emoji, t.data_gb, t.validity_days
+          FROM orders o
+          LEFT JOIN tariffs t ON t.id = o.tariff_id
+          WHERE o.id::text = $1
+             OR o.checkout_ref = $1
+             OR o.id::text IN (SELECT unnest(order_ids) FROM crypto_sessions WHERE id::text = $1)
+          ORDER BY o.created_at DESC
+          LIMIT 10
+        `;
+        params = [cleanId];
+      } else if (isShortHex) {
+        // Z. B. erste 8 Stellen aus INV-A1B2C3D4 oder #A1B2C3D4
+        const prefix = cleanId.toLowerCase() + '%';
+        sql = `
+          SELECT o.*, t.name as tariff_name, t.country_name, t.country_code, t.flag_emoji, t.data_gb, t.validity_days
+          FROM orders o
+          LEFT JOIN tariffs t ON t.id = o.tariff_id
+          WHERE o.id::text ILIKE $1
+             OR o.checkout_ref ILIKE $1
+             OR o.setup_token ILIKE $1
+             OR o.id::text IN (
+               SELECT unnest(order_ids) FROM crypto_sessions WHERE id::text ILIKE $1
+             )
+          ORDER BY o.created_at DESC
+          LIMIT 10
+        `;
+        params = [prefix];
+      } else if (isIccid) {
+        sql = `
+          SELECT o.*, t.name as tariff_name, t.country_name, t.country_code, t.flag_emoji, t.data_gb, t.validity_days
+          FROM orders o
+          LEFT JOIN tariffs t ON t.id = o.tariff_id
+          WHERE o.iccid = $1 OR o.top_up_iccid = $1
+          ORDER BY o.created_at DESC
+          LIMIT 10
+        `;
+        params = [cleanId];
+      } else {
+        sql = `
+          SELECT o.*, t.name as tariff_name, t.country_name, t.country_code, t.flag_emoji, t.data_gb, t.validity_days
+          FROM orders o
+          LEFT JOIN tariffs t ON t.id = o.tariff_id
+          WHERE o.setup_token = $1
+             OR o.id::text ILIKE $2
+             OR o.checkout_ref ILIKE $2
+          ORDER BY o.created_at DESC
+          LIMIT 10
+        `;
+        params = [cleanId, cleanId + '%'];
+      }
+
+      try {
+        const res = await storefrontDb.query(sql, params);
+        if (res.rows && res.rows.length > 0) {
+          const primary = res.rows[0];
+          primary.items = res.rows;
+          return primary;
+        }
+      } catch (err) {
+        logger.error(`[Storefront Invoice] Postgres Fehler: ${err.message}`);
+      }
+    }
+
+    // 2. Fallback über QueryBuilder
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
+    let query = storefrontDb.from('orders').select('*');
     if (isUuid) {
       query = query.eq('id', cleanId);
     } else {
-      // Suche nach ICCID, Topup-ICCID
-      query = query.or(`iccid.eq.${cleanId},top_up_iccid.eq.${cleanId}`);
+      query = query.or(`iccid.eq.${cleanId},top_up_iccid.eq.${cleanId},setup_token.eq.${cleanId}`);
     }
 
     const { data: order, error } = await query.maybeSingle();
@@ -432,7 +507,6 @@ Preis: ${tariff.sale_price_eur} EUR
     }
     if (!order) return null;
 
-    // Lade den Tarifnamen dazu
     let tariffName = 'eSIM Tarif';
     if (order.tariff_id) {
       try {
@@ -454,69 +528,137 @@ Preis: ${tariff.sale_price_eur} EUR
   },
 
   /**
+   * Formatiert Bestelldaten als kompakten Echtzeit-Kontext für den AI-Systemprompt.
+   */
+  formatInvoiceForAI(order, shopUrl) {
+    if (!order) return null;
+    const cleanShopUrl = (shopUrl || 'https://puresim.net').trim().replace(/\/$/, '');
+    const shortId = order.id ? order.id.slice(0, 8).toUpperCase() : 'UNKNOWN';
+    const orderRef = order.checkout_ref || order.id;
+    const overviewUrl = `${cleanShopUrl}/order?ref=${orderRef}`;
+    const setupUrl = order.setup_token ? `${cleanShopUrl}/setup-view/${order.setup_token}` : overviewUrl;
+
+    const itemsSummary = (order.items && order.items.length > 1)
+      ? order.items.map((it, idx) => `  ${idx + 1}. ${it.tariff_name || 'eSIM'} (Status: ${it.status}, ICCID: ${it.iccid || 'in Zuteilung'})`).join('\n')
+      : null;
+
+    return `ECHTZEIT-BESTELLDATEN AUS DEM PURESIM SHOP-SYSTEM:
+- Bestell-ID: INV-${shortId} (Vollständige UUID: ${order.id})
+- Status: ${order.status} (${order.status === 'completed' ? 'Erfolgreich abgeschlossen & eSIM aktiv' : order.status === 'paid' ? 'Bezahlt, eSIM wird beim Provider eingerichtet' : order.status === 'provisioning' ? 'Wird beim Netzbetreiber eingerichtet (1-3 Min.)' : order.status === 'pending' ? 'Zahlung noch ausstehend / offen' : order.status})
+- Produkt: ${order.tariff_name || 'eSIM Paket'}
+- Betrag: ${order.amount_eur ? Number(order.amount_eur).toFixed(2) + ' EUR' : 'Unbekannt'}
+- Datum: ${order.created_at ? new Date(order.created_at).toLocaleString('de-DE', { timeZone: 'Europe/Berlin' }) : 'Unbekannt'}
+${order.iccid ? `- ICCID: ${order.iccid}` : ''}
+${order.smdp_address ? `- SM-DP+ Adresse: ${order.smdp_address}` : ''}
+${order.activation_code ? `- Aktivierungscode: ${order.activation_code}` : ''}
+- APN: ${order.apn || 'internet'}
+- Link zur eSIM-Einrichtung (QR-Code): ${setupUrl}
+- Link zur Bestellübersicht: ${overviewUrl}
+${itemsSummary ? `- Bestellte eSIMs im Paket:\n${itemsSummary}` : ''}`;
+  },
+
+  /**
    * Formatiert Bestellungsinformationen manipulationssicher für den Kunden.
    */
-  formatInvoiceForCustomer(order, shopUrl) {
-    if (!order) return 'Es konnte keine Bestellung mit dieser Kennung gefunden werden.';
+  formatInvoiceForCustomer(order, shopUrl, platform = 'web_widget') {
+    if (!order) return 'Es konnte keine Bestellung mit dieser Kennung gefunden werden. Bitte prüfe deine Bestell-ID oder wende dich an unseren Support.';
+
+    const isTelegram = (platform === 'telegram');
+    const cleanShopUrl = (shopUrl || 'https://puresim.net').trim().replace(/\/$/, '');
+    const shortId = order.id ? order.id.slice(0, 8).toUpperCase() : 'BESTELLUNG';
+    const orderRef = order.checkout_ref || order.id;
+    const overviewUrl = `${cleanShopUrl}/order?ref=${orderRef}`;
 
     const statusMap = {
-      completed:    { text: 'Abgeschlossen', emoji: '✅' },
-      pending:      { text: 'Ausstehend / Offen', emoji: '⏳' },
-      paid:         { text: 'Bezahlt (wird verarbeitet)', emoji: '💳' },
-      provisioning: { text: 'Wird eingerichtet', emoji: '🔄' },
+      completed:    { text: 'Aktiv / Bereit zur Installation', emoji: '✅' },
+      paid:         { text: 'Bezahlt (wird eingerichtet)', emoji: '💳' },
+      provisioning: { text: 'Wird eingerichtet (dauert 1–3 Min.)', emoji: '🔄' },
+      pending:      { text: 'Ausstehend / Noch nicht bezahlt', emoji: '⏳' },
       failed:       { text: 'Fehlgeschlagen', emoji: '❌' },
-      refunded:     { text: 'Erstattet', emoji: '↩️' }
+      refunded:     { text: 'Erstattet', emoji: '↩️' },
+      expired:      { text: 'Abgelaufen', emoji: '⌛' },
+      cancelled:    { text: 'Storniert', emoji: '🚫' }
     };
 
-    const status = statusMap[order.status] || { text: order.status, emoji: '❓' };
+    const status = statusMap[order.status] || { text: order.status || 'Unbekannt', emoji: 'ℹ️' };
     const dateStr = order.created_at
       ? new Date(order.created_at).toLocaleString('de-DE', { timeZone: 'Europe/Berlin' })
       : 'Unbekannt';
 
+    const b = (str) => isTelegram ? `<b>${str}</b>` : str;
+    const code = (str) => isTelegram ? `<code>${str}</code>` : str;
+
+    const countItems = (order.items && order.items.length > 1) ? order.items.length : 1;
+    const title = countItems > 1 ? `📋 PureSim Bestellübersicht (${countItems} eSIMs)` : `📋 PureSim Bestellübersicht`;
+
     const lines = [
-      `<b>Bestellübersicht</b>`,
-      `📄 Bestellnummer: <code>${order.id}</code>`,
+      b(title),
+      `📄 Bestellnummer: ${code('INV-' + shortId)}`,
       `📅 Datum: ${dateStr}`,
-      `📦 Produkt: <b>${order.tariff_name}</b>`,
-      `💰 Betrag: ${order.amount_eur} EUR`,
-      `🚦 Status: ${status.emoji} <b>${status.text}</b>`,
-    ];
+      `📦 Produkt: ${b(order.tariff_name || 'eSIM Paket')}`,
+      order.amount_eur ? `💰 Betrag: ${Number(order.amount_eur).toFixed(2)} EUR` : null,
+      `🚦 Status: ${status.emoji} ${b(status.text)}`,
+    ].filter(Boolean);
 
     if (order.iccid) {
-      lines.push(`🔑 ICCID: <code>${order.iccid}</code>`);
+      lines.push(`🔑 ICCID: ${code(order.iccid)}`);
+    }
+
+    // Wenn mehrere eSIMs im Paket
+    if (order.items && order.items.length > 1) {
+      lines.push('');
+      lines.push(b('📦 Enthaltene eSIMs:'));
+      order.items.forEach((it, i) => {
+        const itStatus = statusMap[it.status]?.text || it.status;
+        lines.push(`${i + 1}. ${b(it.tariff_name || 'eSIM')} — ${itStatus}`);
+        if (it.iccid) lines.push(`   ICCID: ${code(it.iccid)}`);
+        if (it.setup_token) {
+          lines.push(`   Einrichtung: ${cleanShopUrl}/setup-view/${it.setup_token}`);
+        }
+      });
     }
 
     // Wenn bereit, zeige Installationsdetails
     if (order.status === 'completed') {
       lines.push('');
-      lines.push(`⚙️ <b>eSIM Installationsdaten:</b>`);
+      lines.push(b('⚙️ Installationsdaten:'));
       if (order.smdp_address) {
-        lines.push(`• SM-DP+ Adresse: <code>${order.smdp_address}</code>`);
+        lines.push(`• SM-DP+ Adresse: ${code(order.smdp_address)}`);
       }
       if (order.activation_code) {
-        lines.push(`• Aktivierungscode: <code>${order.activation_code}</code>`);
+        lines.push(`• Aktivierungscode: ${code(order.activation_code)}`);
       }
-      if (order.apn) {
-        lines.push(`• APN: <code>${order.apn}</code>`);
-      }
-      if (order.qr_code_url) {
+      lines.push(`• APN: ${code(order.apn || 'internet')}`);
+
+      if (order.setup_token) {
+        const setupUrl = `${cleanShopUrl}/setup-view/${order.setup_token}`;
         lines.push('');
-        lines.push(`📲 <b>QR-Code zur Installation:</b>`);
+        lines.push(b('📲 eSIM Installation & QR-Code:'));
+        lines.push(setupUrl);
+      } else if (order.qr_code_url) {
+        lines.push('');
+        lines.push(b('📲 QR-Code zur Installation:'));
         lines.push(order.qr_code_url);
       }
+    } else if (order.status === 'paid' || order.status === 'provisioning') {
+      lines.push('');
+      lines.push('ℹ️ Deine eSIM wird gerade beim Provider bereitgestellt (1–3 Minuten). Den aktuellen Status kannst du hier verfolgen:');
+      lines.push(overviewUrl);
     } else if (order.status === 'pending') {
-      const cleanShopUrl = (shopUrl || '').trim().replace(/\/$/, '');
-      if (cleanShopUrl) {
-        const payUrl = `${cleanShopUrl}/checkout/${order.id}`;
-        lines.push('');
-        lines.push(`⚠️ Zahlungslink: <a href="${payUrl}">Bezahle deine eSIM hier</a>`);
-      }
+      lines.push('');
+      lines.push('⚠️ Die Zahlung für diese Bestellung ist noch ausstehend. Hier kannst du die Bestellung abschließen:');
+      lines.push(overviewUrl);
     } else if (order.status === 'failed' && order.error_message) {
       lines.push('');
-      lines.push(`❌ Fehler: ${order.error_message}`);
+      lines.push(`❌ Hinweis: ${order.error_message}`);
     }
 
-    // Parse HTML tags like <b>, <code> etc. cleanly
+    // Ergänzender Link zur Web-Bestellübersicht
+    if (order.status === 'completed') {
+      lines.push('');
+      lines.push(`🌐 Alle Details online: ${overviewUrl}`);
+    }
+
     return lines.join('\n');
   }
 };

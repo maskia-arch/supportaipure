@@ -286,11 +286,14 @@ const adminController = {
         return res.status(404).json({ error: 'Bestellung nicht gefunden' });
       }
       
-      const shopUrl = process.env.STOREFRONT_URL || process.env.SHOP_URL || process.env.SELLAUTH_SHOP_URL || '';
-      const checkoutUrl = `${shopUrl.replace(/\/$/, '')}/checkout/${order.id}`;
+      const shopUrl = process.env.STOREFRONT_URL || process.env.SHOP_URL || process.env.SELLAUTH_SHOP_URL || 'https://puresim.net';
+      const orderRef = order.checkout_ref || order.id;
+      const checkoutUrl = `${shopUrl.replace(/\/$/, '')}/order?ref=${orderRef}`;
+      const setupUrl = order.setup_token ? `${shopUrl.replace(/\/$/, '')}/setup-view/${order.setup_token}` : null;
       
       res.json({
         id: order.id,
+        short_id: 'INV-' + (order.id ? order.id.slice(0, 8).toUpperCase() : ''),
         status: order.status,
         price: order.amount_eur,
         currency: 'EUR',
@@ -298,7 +301,10 @@ const adminController = {
         products: [{ product: order.tariff_name, variant: order.iccid || null }],
         completed_at: order.payment_confirmed_at || null,
         created_at: order.created_at,
-        checkoutUrl
+        checkoutUrl,
+        setupUrl,
+        iccid: order.iccid || null,
+        setup_token: order.setup_token || null
       });
     } catch (err) {
       res.status(500).json({ error: err.message });

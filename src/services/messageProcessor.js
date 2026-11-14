@@ -270,43 +270,59 @@ const messageProcessor = {
     if (chat.is_manual_mode) return null;
 
     // ── /order Handler: direkter Invoice-Lookup vor AI-Call ────────────────
-    // Wenn User schreibt "/order INVOICE_ID" oder "bestellung INVOICE_ID",
+    // Wenn User schreibt "/order INVOICE_ID" oder kurze Befehle wie "Status INV-12345678",
     // wird die Bestellung direkt abgefragt — spart AI-Tokens und liefert exakte Daten.
     if (text) {
-      const orderCmdMatch = text.match(/^\/order\s+((?:#|INV[-_:\s]*)?[a-z0-9_-]+)/i) ||
-                            text.match(/(?:bestellung|invoice|order|rechnung|status)(?:(?:\s+von|\s+zu|\s+für|\s+meiner)?[:\s#]+)((?:#|INV[-_:\s]*)?[a-z0-9_-]+)/i);
-      if (orderCmdMatch) {
-        const invoiceId = orderCmdMatch[1].trim();
-        let orderReply;
-        try {
-          const storefrontService = require('./storefrontService');
-          const shopUrl = process.env.STOREFRONT_URL || process.env.SHOP_URL || process.env.SELLAUTH_SHOP_URL || 'https://puresim.net';
-          const order = await storefrontService.getInvoice(invoiceId);
-          if (!order) {
-            orderReply = `Es wurde keine Bestellung mit der Kennung "${invoiceId}" gefunden. Bitte prüfe deine Bestellnummer (z. B. INV-A1B2C3D4) oder ICCID.`;
-          } else {
-            orderReply = storefrontService.formatInvoiceForCustomer(order, shopUrl, platform);
-          }
-        } catch (err) {
-          logger.warn(`[/order] ${err.message}`);
-          orderReply = 'Fehler bei der Abfrage. Bitte überprüfe deine Bestellnummer oder wende dich an den Support.';
+      const trimmed = text.trim();
+      const ID_TOKEN_REGEX = /(?:(?:#|INV[-_:\s]*)[a-f0-9]{6,36}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|89\d{10,22})/i;
+      const isExplicitOrderCmd = /^\/order\s+/i.test(trimmed);
+      const isShortStatusCommand = isExplicitOrderCmd || (
+        trimmed.length <= 50 &&
+        /^(?:status|bestell(?:ung|status)?|order|rechnung|invoice)\b/i.test(trimmed) &&
+        ID_TOKEN_REGEX.test(trimmed)
+      );
+
+      if (isShortStatusCommand) {
+        let invoiceId = null;
+        if (isExplicitOrderCmd) {
+          invoiceId = trimmed.replace(/^\/order\s+/i, '').trim();
+        } else {
+          const match = trimmed.match(ID_TOKEN_REGEX);
+          if (match) invoiceId = match[0].trim();
         }
-        // Antwort in DB loggen + Vorschau updaten
-        void (async () => {
+
+        if (invoiceId) {
+          let orderReply;
           try {
-            await supabase.from('messages').insert([{ chat_id: chat.id, role: 'assistant', content: orderReply }]);
-          } catch (_) {}
-        })();
-        this._updateChatPreview(chat.id, orderReply, 'assistant');
-        // Telegram: direkt im Chat senden (für Web-Widget: via return)
-        if (platform === 'telegram') {
-          await telegramService.sendMessage(chatId, orderReply, {
-            message_thread_id: threadId,
-            token: botToken,
-            parse_mode: 'HTML'
-          }).catch(() => {});
+            const storefrontService = require('./storefrontService');
+            const shopUrl = process.env.STOREFRONT_URL || process.env.SHOP_URL || process.env.SELLAUTH_SHOP_URL || 'https://puresim.net';
+            const order = await storefrontService.getInvoice(invoiceId);
+            if (!order) {
+              orderReply = `Es wurde keine Bestellung mit der Kennung "${invoiceId}" gefunden. Bitte prüfe deine Bestellnummer (z. B. INV-A1B2C3D4) oder ICCID.`;
+            } else {
+              orderReply = storefrontService.formatInvoiceForCustomer(order, shopUrl, platform);
+            }
+          } catch (err) {
+            logger.warn(`[/order] ${err.message}`);
+            orderReply = 'Fehler bei der Abfrage. Bitte überprüfe deine Bestellnummer oder wende dich an den Support.';
+          }
+          // Antwort in DB loggen + Vorschau updaten
+          void (async () => {
+            try {
+              await supabase.from('messages').insert([{ chat_id: chat.id, role: 'assistant', content: orderReply }]);
+            } catch (_) {}
+          })();
+          this._updateChatPreview(chat.id, orderReply, 'assistant');
+          // Telegram: direkt im Chat senden (für Web-Widget: via return)
+          if (platform === 'telegram') {
+            await telegramService.sendMessage(chatId, orderReply, {
+              message_thread_id: threadId,
+              token: botToken,
+              parse_mode: 'HTML'
+            }).catch(() => {});
+          }
+          return orderReply;
         }
-        return orderReply;
       }
     }
 
@@ -349,15 +365,15 @@ const messageProcessor = {
 
     // Prüfe auf Bestell-ID in der Nachricht, um Echtzeit-Bestelldaten an die KI zu übergeben
     let orderContext = null;
-    const inlineIdMatch = text.match(/\b((?:INV[-_:\s]*)?[a-f0-9]{6,36}(?:-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?|89\d{10,22})\b/i);
-    if (inlineIdMatch && (/^(?:INV|#|89)/i.test(inlineIdMatch[1]) || inlineIdMatch[1].length === 36)) {
+    const inlineIdMatch = text.match(/(?:(?:#|INV[-_:\s]*)[a-f0-9]{6,36}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|89\d{10,22})/i);
+    if (inlineIdMatch) {
       try {
         const storefrontService = require('./storefrontService');
         const shopUrl = process.env.STOREFRONT_URL || process.env.SHOP_URL || process.env.SELLAUTH_SHOP_URL || 'https://puresim.net';
-        const detectedOrder = await storefrontService.getInvoice(inlineIdMatch[1]);
+        const detectedOrder = await storefrontService.getInvoice(inlineIdMatch[0]);
         if (detectedOrder) {
           orderContext = storefrontService.formatInvoiceForAI(detectedOrder, shopUrl);
-          logger.info(`[MP] Echtzeit-Bestelldaten für "${inlineIdMatch[1]}" in KI-Kontext injiziert (Status: ${detectedOrder.status})`);
+          logger.info(`[MP] Echtzeit-Bestelldaten für "${inlineIdMatch[0]}" in KI-Kontext injiziert (Status: ${detectedOrder.status})`);
         }
       } catch (err) {
         logger.warn(`[MP] Inline Order-Lookup Fehler: ${err.message}`);

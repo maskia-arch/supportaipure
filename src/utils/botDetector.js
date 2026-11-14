@@ -15,7 +15,10 @@ const BOT_UA_REGEX = /(googlebot|bingbot|bingpreview|msnbot|baiduspider|yandexbo
  */
 function isBotUserAgent(ua) {
   if (!ua || typeof ua !== 'string' || ua.trim().length < 8) return true;
-  return BOT_UA_REGEX.test(ua);
+  if (BOT_UA_REGEX.test(ua)) return true;
+  // Gefälschte zukünftige Chrome-Versionen (z. B. Chrome/148, Chrome/149, Chrome/150 von Scraper-Netzwerken)
+  if (/Chrome\/(1[3-9]\d|[2-9]\d\d)\./i.test(ua)) return true;
+  return false;
 }
 
 /**
@@ -44,8 +47,10 @@ function isBot(req) {
 
   // Fingerprint-Prüfung
   const fp = (req.body && (req.body.fingerprint || req.body.fp)) || '';
-  if (typeof fp === 'string' && BOT_UA_REGEX.test(fp)) {
-    return true;
+  if (typeof fp === 'string') {
+    if (BOT_UA_REGEX.test(fp) || /Chrome\/(1[3-9]\d|[2-9]\d\d)\./i.test(fp)) {
+      return true;
+    }
   }
 
   return false;

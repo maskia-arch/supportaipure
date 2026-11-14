@@ -100,6 +100,16 @@ function _init() {
   return _wpReady;
 }
 
+function isTariffDetailUrl(url) {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    return /^\/([a-z]{2}\/)?tariffs\/[^/?#]+$/i.test(u.pathname);
+  } catch (_) {
+    return /([a-z]{2}\/)?tariffs\/[^/?#]+/i.test(String(url));
+  }
+}
+
 const notificationService = {
 
   isReady() { return _wpReady; },
@@ -182,6 +192,12 @@ const notificationService = {
   async notifyNewVisitor({ chatId, visitorNumber, pageTitle, pageUrl, isNew, userAgent }) {
     if (!_init() || !chatId) return;
     if (userAgent && isBotUserAgent(userAgent)) return;
+
+    // Nur bei echten Besuchern ab Startseite bis zum Checkout:
+    // Kalt-Aufrufe einzelner Tarife (z. B. Crawler aus Sitemap) unterdrücken
+    if (isNew !== false && isTariffDetailUrl(pageUrl)) {
+      return;
+    }
 
     const key = String(chatId);
     const now = Date.now();
